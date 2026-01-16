@@ -1,0 +1,827 @@
+"""
+LLM Provider Abstraction Layer
+Supports multiple LLM providers with priority on open source.
+
+Supported Providers:
+- Ollama (Local, Free) - PRIORITY
+- LM Studio (Local, Free)
+- vLLM (Local, Free)
+- Anthropic Claude
+- OpenAI GPT
+- Google Gemini
+- Mistral AI
+- Groq (Fast inference)
+- Together AI
+- Replicate
+"""
+
+from typing import Dict, List, Optional, Any
+from abc import ABC, abstractmethod
+import os
+import logging
+import json
+
+
+class BaseLLMProvider(ABC):
+    """Base class for all LLM providers."""
+    
+    @abstractmethod
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        pass
+    
+    @abstractmethod
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        pass
+    
+    @abstractmethod
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings."""
+        pass
+    
+    @abstractmethod
+    def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        pass
+        
+    @abstractmethod
+    def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        pass
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Provider name."""
+        pass
+
+
+# ============================================================================
+# LOCAL / OPENSOURCE PROVIDERS (PRIORITY)
+# ============================================================================
+
+class OllamaProvider(BaseLLMProvider):
+    """
+    Ollama - Run LLMs locally (FREE, OPENSOURCE)
+    
+    Models: llama3, mistral, codellama, phi, gemma, etc.
+    Installation: curl -fsSL https://ollama.com/install.sh | sh
+    """
+    
+    def __init__(self, 
+                 model: str = "llama3",
+                 base_url: str = "http://localhost:11434"):
+        self.model = model
+        self.base_url = base_url
+        self.logger = logging.getLogger("Ollama")
+        
+        try:
+            import requests
+            self.requests = requests
+            self._test_connection()
+        except ImportError:
+            raise ImportError("pip install requests")
+    
+    def _test_connection(self):
+        """Test Ollama connection."""
+        try:
+            response = self.requests.get(f"{self.base_url}/api/tags", timeout=1)
+            if response.status_code == 200:
+                self.logger.info(f"[OK] Ollama connected: {self.model}")
+            else:
+                raise ConnectionError(f"Ollama returned {response.status_code}")
+        except Exception as e:
+            raise ConnectionError(f"Ollama not running at {self.base_url}: {e}")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        response = self.requests.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                **kwargs
+            }
+        )
+        data = response.json()
+        if "response" in data:
+            return data["response"]
+        elif "message" in data and "content" in data["message"]:
+            return data["message"]["content"]
+        raise KeyError(f"Unexpected Ollama response format: {data}")
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        response = self.requests.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+                **kwargs
+            }
+        )
+        data = response.json()
+        if "message" in data and "content" in data["message"]:
+            return data["message"]["content"]
+        elif "response" in data:
+            return data["response"]
+        raise KeyError(f"Unexpected Ollama chat response format: {data}")
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings."""
+        response = self.requests.post(
+            f"{self.base_url}/api/embeddings",
+            json={
+                "model": self.model,
+                "prompt": text
+            }
+        )
+        return response.json()["embedding"]
+    
+    def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        response = self.requests.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": True,
+                **kwargs
+            },
+            stream=True
+        )
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                yield chunk.get("response", "")
+                if chunk.get("done"):
+                    break
+
+    def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        response = self.requests.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                **kwargs
+            },
+            stream=True
+        )
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                yield chunk.get("message", {}).get("content", "")
+                if chunk.get("done"):
+                    break
+    
+    @property
+    def name(self) -> str:
+        return f"Ollama/{self.model}"
+
+
+class LMStudioProvider(BaseLLMProvider):
+    """
+    LM Studio - Local LLM with GUI (FREE, OPENSOURCE)
+    
+    Download: https://lmstudio.ai/
+    Compatible with OpenAI API format.
+    """
+    
+    def __init__(self, 
+                 model: str = "local-model",
+                 base_url: str = "http://localhost:1234/v1"):
+        self.model = model
+        self.base_url = base_url
+        self.logger = logging.getLogger("LMStudio")
+        
+        try:
+            import openai
+            import requests
+            self.requests = requests
+            self.client = openai.OpenAI(
+                base_url=base_url,
+                api_key="lm-studio"
+            )
+            self._test_connection()
+            self.logger.info(f"[OK] LM Studio connected: {model}")
+        except Exception as e:
+            raise ConnectionError(f"LM Studio not found: {e}")
+            
+    def _test_connection(self):
+        """Test LM Studio connection."""
+        try:
+            # LM Studio usually has a /v1/models endpoint
+            response = self.requests.get(f"{self.base_url}/models", timeout=1)
+            if response.status_code != 200:
+                raise ConnectionError(f"LM Studio returned {response.status_code}")
+        except Exception as e:
+            raise ConnectionError(f"LM Studio not running at {self.base_url}: {e}")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        response = self.client.completions.create(
+            model=self.model,
+            prompt=prompt,
+            **kwargs
+        )
+        return response.choices[0].text
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings."""
+        response = self.client.embeddings.create(
+            model=self.model,
+            input=text
+        )
+        return response.data[0].embedding
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        stream = self.client.completions.create(
+            model=self.model,
+            prompt=prompt,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].text:
+                yield chunk.choices[0].text
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+    
+    @property
+    def name(self) -> str:
+        return f"LMStudio/{self.model}"
+
+
+class VLLMProvider(BaseLLMProvider):
+    """
+    vLLM - Fast inference server (FREE, OPENSOURCE)
+    
+    Installation: pip install vllm
+    Best for: Production serving of open models
+    """
+    
+    def __init__(self, 
+                 model: str = "meta-llama/Llama-2-7b-hf",
+                 base_url: str = "http://localhost:8000"):
+        self.model = model
+        self.base_url = base_url
+        self.logger = logging.getLogger("vLLM")
+        
+        try:
+            import requests
+            self.requests = requests
+            self._test_connection()
+            self.logger.info(f"[OK] vLLM connected: {model}")
+        except ImportError:
+            raise ImportError("pip install requests")
+        except Exception as e:
+            raise ConnectionError(f"vLLM server not found at {base_url}: {e}")
+            
+    def _test_connection(self):
+        """Test vLLM connection (OpenAI compatible or direct)."""
+        try:
+            # Check models endpoint (OpenAI compatible)
+            response = self.requests.get(f"{self.base_url}/models", timeout=1)
+            if response.status_code != 200:
+                # Try direct generate endpoint as fallback
+                response = self.requests.get(f"{self.base_url}/health", timeout=1)
+                if response.status_code != 200:
+                    raise ConnectionError(f"vLLM returned {response.status_code}")
+        except Exception as e:
+            raise ConnectionError(f"vLLM not running at {self.base_url}")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        response = self.requests.post(
+            f"{self.base_url}/generate",
+            json={
+                "prompt": prompt,
+                "max_tokens": kwargs.get("max_tokens", 512),
+                **kwargs
+            }
+        )
+        return response.json()["text"][0]
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        # Convert to single prompt
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        return self.complete(prompt, **kwargs)
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        response = self.requests.post(
+            f"{self.base_url}/generate",
+            json={
+                "prompt": prompt,
+                "stream": True,
+                "max_tokens": kwargs.get("max_tokens", 512),
+                **kwargs
+            },
+            stream=True
+        )
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                yield chunk.get("text", [""])[0]
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        # Convert to single prompt
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        async for chunk in self.stream_complete(prompt, **kwargs):
+            yield chunk
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings (fallback to local)."""
+        from .embedding_providers import EmbeddingFactory
+        if not hasattr(self, '_embedding_fallback'):
+            self._embedding_fallback = EmbeddingFactory.auto_detect()
+        return self._embedding_fallback.embed(text)
+    
+    @property
+    def name(self) -> str:
+        return f"vLLM/{self.model}"
+
+
+class MockLLMProvider(BaseLLMProvider):
+    """Mock LLM Provider for testing."""
+    
+    def __init__(self, model: str = "mock-model", **kwargs):
+        self.model = model
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        return f"Mock response to: {prompt[:50]}..."
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        return "Mock chat response: I'm here to help with your agentic tasks!"
+    
+    def embed(self, text: str) -> List[float]:
+        import random
+        return [random.random() for _ in range(1536)]
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        yield f"Mock stream response to: {prompt[:20]}..."
+        
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        yield "Mock chat stream: "
+        yield "I'm "
+        yield "helping!"
+    
+    @property
+    def name(self) -> str:
+        return "Mock/LLM"
+
+
+# ============================================================================
+# CLOUD OPENSOURCE PROVIDERS
+# ============================================================================
+
+class GroqProvider(BaseLLMProvider):
+    """
+    Groq - Ultra-fast inference (FREE tier, OPENSOURCE models)
+    
+    Models: llama3-70b, mixtral-8x7b, gemma-7b
+    Speed: 500+ tokens/sec
+    """
+    
+    def __init__(self, 
+                 model: str = "llama3-70b-8192",
+                 api_key: Optional[str] = None):
+        self.model = model
+        self.api_key = api_key or os.getenv("GROQ_API_KEY")
+        self.logger = logging.getLogger("Groq")
+        
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY required")
+        
+        try:
+            from groq import Groq
+            self.client = Groq(api_key=self.api_key)
+            self.logger.info(f"[OK] Groq connected: {model}")
+        except ImportError:
+            raise ImportError("pip install groq")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        return self.chat([{"role": "user", "content": prompt}], **kwargs)
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings (fallback)."""
+        from .embedding_providers import EmbeddingFactory
+        if not hasattr(self, '_embedding_fallback'):
+            self._embedding_fallback = EmbeddingFactory.auto_detect()
+        return self._embedding_fallback.embed(text)
+    
+    @property
+    def name(self) -> str:
+        return f"Groq/{self.model}"
+
+
+class TogetherProvider(BaseLLMProvider):
+    """
+    Together AI - Opensource models (PAID, but cheap)
+    
+    Models: llama-2, mistral, mixtral, etc.
+    """
+    
+    def __init__(self, 
+                 model: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                 api_key: Optional[str] = None):
+        self.model = model
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        self.logger = logging.getLogger("Together")
+        
+        if not self.api_key:
+            raise ValueError("TOGETHER_API_KEY required")
+        
+        try:
+            import together
+            together.api_key = self.api_key
+            self.together = together
+            self.logger.info(f"[OK] Together AI connected: {model}")
+        except ImportError:
+            raise ImportError("pip install together")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        """Generate completion."""
+        response = self.together.Complete.create(
+            prompt=prompt,
+            model=self.model,
+            **kwargs
+        )
+        return response['output']['choices'][0]['text']
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """Chat completion."""
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        return self.complete(prompt, **kwargs)
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings."""
+        response = self.together.Embeddings.create(
+            input=text,
+            model="togethercomputer/m2-bert-80M-8k-retrieval"
+        )
+        return response['data'][0]['embedding']
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        # Together uses a slightly different API for streaming depending on the model,
+        # but the inference client usually supports it.
+        stream = self.together.completions.create(
+            model=self.model,
+            prompt=prompt,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            yield chunk.choices[0].text
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        stream = self.together.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            yield chunk.choices[0].delta.content
+    
+    @property
+    def name(self) -> str:
+        return f"Together/{self.model}"
+
+
+# ============================================================================
+# COMMERCIAL PROVIDERS (Secondary)
+# ============================================================================
+
+class AnthropicProvider(BaseLLMProvider):
+    """Anthropic Claude (PAID)."""
+    
+    def __init__(self, 
+                 model: str = "claude-3-sonnet-20240229",
+                 api_key: Optional[str] = None):
+        self.model = model
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        
+        try:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+        except ImportError:
+            raise ImportError("pip install anthropic")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        return self.chat([{"role": "user", "content": prompt}], **kwargs)
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        response = self.client.messages.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=kwargs.get("max_tokens", 1024)
+        )
+        return response.content[0].text
+    
+    async def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        async for chunk in self.stream_chat([{"role": "user", "content": prompt}], **kwargs):
+            yield chunk
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        with self.client.messages.stream(
+            model=self.model,
+            messages=messages,
+            max_tokens=kwargs.get("max_tokens", 1024)
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    
+    def embed(self, text: str) -> List[float]:
+        """Generate embeddings (fallback)."""
+        from .embedding_providers import EmbeddingFactory
+        if not hasattr(self, '_embedding_fallback'):
+            self._embedding_fallback = EmbeddingFactory.auto_detect()
+        return self._embedding_fallback.embed(text)
+    
+    @property
+    def name(self) -> str:
+        return f"Anthropic/{self.model}"
+
+
+class OpenAIProvider(BaseLLMProvider):
+    """OpenAI GPT (PAID)."""
+    
+    def __init__(self, 
+                 model: str = "gpt-4-turbo-preview",
+                 api_key: Optional[str] = None):
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        
+        try:
+            import openai
+            self.client = openai.OpenAI(api_key=self.api_key)
+            self._test_connection()
+        except Exception as e:
+            raise ConnectionError(f"OpenAI failed: {e}")
+            
+    def _test_connection(self):
+        """Test OpenAI connection (auth check)."""
+        if not self.api_key or self.api_key.startswith("sk-..."):
+             raise ValueError("OpenAI API key is invalid or placeholder")
+        try:
+            # Simple list models call to check auth
+            self.client.models.list()
+        except Exception as e:
+            raise ConnectionError(f"OpenAI auth failed: {e}")
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        return self.chat([{"role": "user", "content": prompt}], **kwargs)
+    
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+    
+    def embed(self, text: str) -> List[float]:
+        response = self.client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text
+        )
+        return response.data[0].embedding
+        
+    def stream_complete(self, prompt: str, **kwargs):
+        """Stream completion."""
+        stream = self.client.completions.create(
+            model=self.model,
+            prompt=prompt,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if chunk.choices[0].text:
+                yield chunk.choices[0].text
+
+    def stream_chat(self, messages: List[Dict], **kwargs):
+        """Stream chat completion."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **kwargs
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+    
+    @property
+    def name(self) -> str:
+        return f"OpenAI/{self.model}"
+
+
+# ============================================================================
+# PROVIDER FACTORY
+# ============================================================================
+
+class LLMFactory:
+    """
+    Factory for creating LLM providers.
+    
+    Priority order:
+    1. Local/Free (Ollama, LM Studio, vLLM)
+    2. Cloud Free Tier (Groq)
+    3. Cloud Opensource (Together)
+    4. Commercial (Claude, GPT)
+    """
+    
+    PROVIDERS = {
+        # Local (Priority)
+        'ollama': OllamaProvider,
+        'lmstudio': LMStudioProvider,
+        'vllm': VLLMProvider,
+        
+        # Cloud Opensource
+        'groq': GroqProvider,
+        'together': TogetherProvider,
+        
+        # Commercial
+        'anthropic': AnthropicProvider,
+        'openai': OpenAIProvider,
+        
+        # Testing
+        'mock': MockLLMProvider,
+    }
+    
+    @classmethod
+    def create(cls, 
+               provider: str = "ollama",
+               model: Optional[str] = None,
+               **kwargs) -> BaseLLMProvider:
+        """
+        Create LLM provider.
+        
+        Args:
+            provider: Provider name
+            model: Model name (optional, uses default)
+            **kwargs: Provider-specific kwargs
+        """
+        if provider not in cls.PROVIDERS:
+            raise ValueError(f"Unknown provider: {provider}. "
+                           f"Available: {list(cls.PROVIDERS.keys())}")
+        
+        provider_class = cls.PROVIDERS[provider]
+        
+        # Create with model if specified
+        if model:
+            return provider_class(model=model, **kwargs)
+        else:
+            return provider_class(**kwargs)
+    
+    @classmethod
+    def auto_detect(cls) -> BaseLLMProvider:
+        """
+        Auto-detect best available provider.
+        
+        Priority:
+        1. Try Ollama (local)
+        2. Try LM Studio (local)
+        3. Try Groq (cloud, free)
+        4. Try OpenAI (fallback)
+        """
+        logger = logging.getLogger("LLMFactory")
+        
+        # Try Ollama
+        try:
+            provider = cls.create("ollama")
+            logger.info("[OK] Using Ollama (local, free)")
+            return provider
+        except:
+            pass
+        
+        # Try LM Studio
+        try:
+            provider = cls.create("lmstudio")
+            logger.info("[OK] Using LM Studio (local, free)")
+            return provider
+        except:
+            pass
+        
+        # Try Groq
+        if os.getenv("GROQ_API_KEY"):
+            try:
+                provider = cls.create("groq")
+                logger.info("[OK] Using Groq (cloud, free tier)")
+                return provider
+            except:
+                pass
+        
+        # Fallback to OpenAI
+        if os.getenv("OPENAI_API_KEY"):
+            try:
+                provider = cls.create("openai")
+                logger.warning("  Using OpenAI (commercial, paid)")
+                return provider
+            except:
+                pass
+        
+        # Try mock as ultimate fallback
+        try:
+            return cls.create("mock")
+        except:
+            pass
+            
+        raise RuntimeError(
+            "No LLM provider available. Install Ollama or set API keys."
+        )
+
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+
+if __name__ == "__main__":
+    print("LLM Provider Examples:\n")
+    
+    # Auto-detect
+    print("1. Auto-detect:")
+    llm = LLMFactory.auto_detect()
+    print(f"   Using: {llm.name}\n")
+    
+    # Specific providers
+    print("2. Specific providers:")
+    
+    providers = [
+        ("ollama", "llama3"),
+        ("groq", "llama3-70b-8192"),
+        ("together", "mistralai/Mixtral-8x7B-Instruct-v0.1"),
+    ]
+    
+    for provider, model in providers:
+        try:
+            llm = LLMFactory.create(provider, model)
+            print(f"   [OK] {llm.name}")
+        except Exception as e:
+            print(f"     {provider}: {e}")
