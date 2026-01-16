@@ -3,22 +3,22 @@ import re
 
 def replace_unicode(directory):
     replacements = {
-        '✓': '[OK]',
-        '✅': '[OK]',
-        '📂': '[FILE]',
-        '⚠️': '[WARN]',
-        '❌': '[ERROR]',
-        '✨': '[NEW]',
-        '🔥': '[HOT]',
-        '🚀': '[START]',
-        '📊': '[CHART]',
-        '🧠': '[AI]',
-        '💬': '[CHAT]',
-        '🛠️': '[TOOL]',
-        '🧱': '[STORAGE]',
-        '🔗': '[LINK]',
-        '🛑': '[STOP]',
-        '🛡️': '[SAFE]',
+        '[OK]': '[OK]',
+        '[OK]': '[OK]',
+        '[FILE]': '[FILE]',
+        '[WARN]': '[WARN]',
+        '[ERROR]': '[ERROR]',
+        '[NEW]': '[NEW]',
+        '[HOT]': '[HOT]',
+        '[START]': '[START]',
+        '[CHART]': '[CHART]',
+        '[AI]': '[AI]',
+        '[CHAT]': '[CHAT]',
+        '[TOOL]': '[TOOL]',
+        '[STORAGE]': '[STORAGE]',
+        '[LINK]': '[LINK]',
+        '[STOP]': '[STOP]',
+        '[SAFE]': '[SAFE]',
     }
     
     # Also find all non-ascii and replace them if not in map

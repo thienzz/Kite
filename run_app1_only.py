@@ -8,14 +8,16 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from agentic_framework import AgenticAI
 
-def run_application_1():
+import asyncio
+
+async def run_application_1():
     print("\n" + "="*80)
     print("APPLICATION 1: E-COMMERCE CUSTOMER SUPPORT")
     print("="*80)
 
     ai = AgenticAI()
     
-    print("\n🛍️  Building customer support system...")
+    print("\n[OK] Building customer support system...")
     
     # 1. Setup specialized tools
     order_data = {
@@ -79,20 +81,20 @@ def run_application_1():
         "Is the new laptop in stock?"
     ]
     
-    print("\n📞 Testing customer support system:")
+    print("\n[OK] Testing customer support system:")
     for query in test_queries:
         print(f"\n   Customer: {query}")
         route = ai.semantic_router.route(query)
         
         # Dispatch
         if route['route'] == "order_status":
-            result = order_agent.run(query)
+            result = await order_agent.run(query)
         elif route['route'] == "refund":
-            result = refund_agent.run(query)
+            result = await refund_agent.run(query)
         elif route['route'] == "product":
-            result = product_agent.run(query)
+            result = await product_agent.run(query)
         else:
-            print(f"   ⚠️  Low confidence ({route['confidence']*100:.2f}% < 75.00%)")
+            print(f"   [WARN]  Low confidence ({route['confidence']*100:.2f}% < 75.00%)")
             print("   Routing to General Agent for clarification")
             result = {"response": "I can help with that. Could you provide more details?"}
             
@@ -100,4 +102,4 @@ def run_application_1():
         print(f"   Response: {result.get('response')}")
 
 if __name__ == "__main__":
-    run_application_1()
+    asyncio.run(run_application_1())

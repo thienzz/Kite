@@ -22,9 +22,9 @@ def test_config():
     print(f"  SLM: {agent_custom.metadata['slm']}")
     
     if agent_custom.metadata['llm'] == "Mock/LLM":
-        print("\n✅ SUCCESS: Per-agent configuration verified!")
+        print("\n[OK] SUCCESS: Per-agent configuration verified!")
     else:
-        print("\n❌ FAILED: Per-agent configuration mismatch.")
+        print("\n[ERROR] FAILED: Per-agent configuration mismatch.")
 
 if __name__ == "__main__":
     test_config()
