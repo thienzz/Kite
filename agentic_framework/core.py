@@ -189,8 +189,16 @@ class AgenticAI:
     def _init_tools(self):
         """Initialize tool registry."""
         from .tool_registry import ToolRegistry
+        from .tools.contrib import web_search, calculator, get_current_datetime
+        
         self.tools = ToolRegistry(self.config, self.logger)
-        self.logger.info("  [OK] Tools")
+        
+        # Register standard contrib tools
+        self.create_tool("web_search", web_search, "Search the web for information")
+        self.create_tool("calculator", calculator, "Evaluate mathematical expressions")
+        self.create_tool("get_datetime", get_current_datetime, "Get current date and time")
+        
+        self.logger.info("  [OK] Tools (including contrib)")
     
     def _init_slm(self):
         """Initialize SLM specialists."""
@@ -284,15 +292,75 @@ class AgenticAI:
                 
         return Agent(name, system_prompt, agent_llm, tools or [], self, agent_slm)
     
+    def create_react_agent(self, 
+                           name: str, 
+                           system_prompt: str, 
+                           tools: List = None,
+                           kill_switch = None,
+                           **kwargs):
+        """
+        Create a ReActAgent for autonomous tasks.
+        """
+        from .agents.react_agent import ReActAgent
+        from .safety.kill_switch import KillSwitch
+        
+        # Use provided or default kill switch
+        ks = kill_switch or KillSwitch()
+        
+        # We can reuse the same LLM/SLM logic from create_agent if needed,
+        # but for now let's keep it simple and use the base agent creation.
+        base_agent = self.create_agent(name, system_prompt, tools, **kwargs)
+        
+        return ReActAgent(
+            name=base_agent.name,
+            system_prompt=base_agent.system_prompt,
+            llm=base_agent.llm,
+            tools=list(base_agent.tools.values()),
+            framework=self,
+            slm=base_agent.slm,
+            kill_switch=ks
+        )
+    
     def create_tool(self, name: str, func: Callable, description: str):
-        """Create custom tool."""
+        """Create and register custom tool."""
         from .tool import Tool
-        return Tool(name, func, description)
+        tool = Tool(name, func, description)
+        if hasattr(self, 'tools'):
+            self.tools.register(name, tool)
+        return tool
     
     def create_workflow(self, name: str):
         """Create workflow."""
         return self.pipeline.create(name)
     
+    async def process_parallel(self, tasks: List[Dict]) -> List[Dict]:
+        """
+        Run multiple agent tasks in parallel.
+        
+        Args:
+            tasks: List of dicts, each containing:
+                - agent: The agent instance or name
+                - input: The user input
+                - context: Optional context
+                
+        Returns:
+            List of results.
+        """
+        import asyncio
+        
+        async_tasks = []
+        for task in tasks:
+            agent = task['agent']
+            if isinstance(agent, str):
+                # We don't have a direct name -> agent map in AgenticAI yet, 
+                # usually agents are managed by the user or router.
+                # For this implementation, we assume the agent object is passed.
+                pass
+            
+            async_tasks.append(agent.run(task['input'], task.get('context')))
+            
+        return await asyncio.gather(*async_tasks)
+
     def get_metrics(self) -> Dict:
         return {
             'circuit_breaker': getattr(self.circuit_breaker, 'get_stats', lambda: {})(),

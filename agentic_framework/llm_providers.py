@@ -55,6 +55,16 @@ class BaseLLMProvider(ABC):
     def name(self) -> str:
         """Provider name."""
         pass
+    
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async version of complete."""
+        import asyncio
+        return await asyncio.to_thread(self.complete, prompt, **kwargs)
+        
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async version of chat."""
+        import asyncio
+        return await asyncio.to_thread(self.chat, messages, **kwargs)
 
 
 # ============================================================================
@@ -77,58 +87,103 @@ class OllamaProvider(BaseLLMProvider):
         self.logger = logging.getLogger("Ollama")
         
         try:
-            import requests
-            self.requests = requests
+            import httpx
             self._test_connection()
         except ImportError:
-            raise ImportError("pip install requests")
+            raise ImportError("pip install httpx")
     
     def _test_connection(self):
         """Test Ollama connection."""
+        import httpx
         try:
-            response = self.requests.get(f"{self.base_url}/api/tags", timeout=1)
-            if response.status_code == 200:
-                self.logger.info(f"[OK] Ollama connected: {self.model}")
-            else:
-                raise ConnectionError(f"Ollama returned {response.status_code}")
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get(f"{self.base_url}/api/tags")
+                if response.status_code == 200:
+                    self.logger.info(f"[OK] Ollama connected: {self.model}")
+                else:
+                    raise ConnectionError(f"Ollama returned {response.status_code}")
         except Exception as e:
             raise ConnectionError(f"Ollama not running at {self.base_url}: {e}")
     
     def complete(self, prompt: str, **kwargs) -> str:
-        """Generate completion."""
-        response = self.requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                **kwargs
-            }
-        )
-        data = response.json()
-        if "response" in data:
-            return data["response"]
-        elif "message" in data and "content" in data["message"]:
-            return data["message"]["content"]
-        raise KeyError(f"Unexpected Ollama response format: {data}")
+        """Generate completion (sync)."""
+        import httpx
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            data = response.json()
+            if "response" in data:
+                return data["response"]
+            elif "message" in data and "content" in data["message"]:
+                return data["message"]["content"]
+            raise KeyError(f"Unexpected Ollama response format: {data}")
+
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Native async complete."""
+        import httpx
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            data = response.json()
+            if "response" in data:
+                return data["response"]
+            elif "message" in data and "content" in data["message"]:
+                return data["message"]["content"]
+            raise KeyError(f"Unexpected Ollama response format: {data}")
     
     def chat(self, messages: List[Dict], **kwargs) -> str:
-        """Chat completion."""
-        response = self.requests.post(
-            f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": False,
-                **kwargs
-            }
-        )
-        data = response.json()
-        if "message" in data and "content" in data["message"]:
-            return data["message"]["content"]
-        elif "response" in data:
-            return data["response"]
-        raise KeyError(f"Unexpected Ollama chat response format: {data}")
+        """Chat completion (sync)."""
+        import httpx
+        with httpx.Client(timeout=180.0) as client:
+            response = client.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            data = response.json()
+            if "message" in data and "content" in data["message"]:
+                return data["message"]["content"]
+            elif "response" in data:
+                return data["response"]
+            raise KeyError(f"Unexpected Ollama chat response format: {data}")
+
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Native async chat."""
+        import httpx
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            data = response.json()
+            if "message" in data and "content" in data["message"]:
+                return data["message"]["content"]
+            elif "response" in data:
+                return data["response"]
+            raise KeyError(f"Unexpected Ollama chat response format: {data}")
     
     def embed(self, text: str) -> List[float]:
         """Generate embeddings."""
@@ -608,7 +663,6 @@ class AnthropicProvider(BaseLLMProvider):
     def name(self) -> str:
         return f"Anthropic/{self.model}"
 
-
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI GPT (PAID)."""
     
@@ -634,6 +688,23 @@ class OpenAIProvider(BaseLLMProvider):
             self.client.models.list()
         except Exception as e:
             raise ConnectionError(f"OpenAI auth failed: {e}")
+    
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """True async chat for OpenAI."""
+        if not hasattr(self, 'async_client'):
+            import openai
+            self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
+        
+        response = await self.async_client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """True async complete for OpenAI."""
+        return await self.chat_async([{"role": "user", "content": prompt}], **kwargs)
     
     def complete(self, prompt: str, **kwargs) -> str:
         return self.chat([{"role": "user", "content": prompt}], **kwargs)

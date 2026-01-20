@@ -41,12 +41,32 @@ class BaseSLMProvider(ABC):
     def review_code(self, code: str, language: str = "python") -> Dict:
         """Review code for issues."""
         pass
+        
+    @abstractmethod
+    def complete(self, prompt: str, **kwargs) -> str:
+        """General completion."""
+        pass
+        
+    @abstractmethod
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """General chat."""
+        pass
     
     @property
     @abstractmethod
     def name(self) -> str:
         """Provider name."""
         pass
+
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async version of complete."""
+        import asyncio
+        return await asyncio.to_thread(self.complete, prompt, **kwargs)
+        
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async version of chat."""
+        import asyncio
+        return await asyncio.to_thread(self.chat, messages, **kwargs)
 
 
 # ============================================================================
@@ -76,8 +96,7 @@ class OllamaSLMProvider(BaseSLMProvider):
         self.logger = logging.getLogger("OllamaSLM")
         
         try:
-            import requests
-            self.requests = requests
+            import httpx
             self._test_connection()
             self.logger.info(f"[OK] Ollama SLM configured (SQL: {self.sql_model})")
         except Exception as e:
@@ -85,34 +104,62 @@ class OllamaSLMProvider(BaseSLMProvider):
             
     def _test_connection(self):
         """Test Ollama connection."""
+        import httpx
         try:
-            response = self.requests.get(f"{self.base_url}/api/tags", timeout=1)
-            if response.status_code != 200:
-                raise ConnectionError(f"Ollama returned {response.status_code}")
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get(f"{self.base_url}/api/tags")
+                if response.status_code != 200:
+                    raise ConnectionError(f"Ollama returned {response.status_code}")
         except Exception as e:
             raise ConnectionError(f"Ollama not running at {self.base_url}: {e}")
             
     def _generate(self, model: str, prompt: str, **kwargs) -> str:
-        """Generate with Ollama."""
-        response = self.requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                **kwargs
-            }
-        )
-        try:
-            result = response.json()
-            if "error" in result:
-                raise ValueError(f"Ollama error: {result['error']}")
-            if "response" not in result:
-                raise KeyError(f"Missing 'response' in: {result}")
-            return result["response"]
-        except (KeyError, ValueError) as e:
-            self.logger.error(f"Failed to generate: {e}")
-            raise RuntimeError(f"Ollama generation failed: {e}")
+        """Generate with Ollama (sync)."""
+        import httpx
+        with httpx.Client(timeout=180.0) as client:
+            response = client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            try:
+                result = response.json()
+                if "error" in result:
+                    raise ValueError(f"Ollama error: {result['error']}")
+                if "response" not in result:
+                    raise KeyError(f"Missing 'response' in: {result}")
+                return result["response"]
+            except (KeyError, ValueError) as e:
+                self.logger.error(f"Failed to generate: {e}")
+                raise RuntimeError(f"Ollama generation failed: {e}")
+
+    async def _generate_async(self, model: str, prompt: str, **kwargs) -> str:
+        """Generate with Ollama (async)."""
+        import httpx
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    **kwargs
+                }
+            )
+            try:
+                result = response.json()
+                if "error" in result:
+                    raise ValueError(f"Ollama error: {result['error']}")
+                if "response" not in result:
+                    raise KeyError(f"Missing 'response' in: {result}")
+                return result["response"]
+            except (KeyError, ValueError) as e:
+                self.logger.error(f"Failed to generate: {e}")
+                raise RuntimeError(f"Ollama generation failed: {e}")
     
     def generate_sql(self, natural_query: str, schema: Optional[Dict] = None) -> Dict:
         """Generate SQL using codellama."""
@@ -214,6 +261,31 @@ List issues in format:
             "latency_ms": round(latency, 2),
             "provider": "ollama"
         }
+
+    def complete(self, prompt: str, **kwargs) -> str:
+        """General completion."""
+        return self._generate(self.classifier_model, prompt, **kwargs)
+        
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """General chat."""
+        # Simple convert messages to prompt for Ollama generate API
+        prompt = ""
+        for msg in messages:
+            prompt += f"{msg['role'].upper()}: {msg['content']}\n"
+        prompt += "ASSISTANT: "
+        return self._generate(self.classifier_model, prompt, **kwargs)
+
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Native async completion."""
+        return await self._generate_async(self.classifier_model, prompt, **kwargs)
+        
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Native async chat."""
+        prompt = ""
+        for msg in messages:
+            prompt += f"{msg['role'].upper()}: {msg['content']}\n"
+        prompt += "ASSISTANT: "
+        return await self._generate_async(self.classifier_model, prompt, **kwargs)
     
     @property
     def name(self) -> str:
@@ -351,6 +423,19 @@ List issues as:
             "provider": "groq"
         }
     
+    def complete(self, prompt: str, **kwargs) -> str:
+        """General completion."""
+        return self._chat(self.classifier_model, prompt, **kwargs)
+        
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        """General chat."""
+        response = self.client.chat.completions.create(
+            model=self.classifier_model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+    
     @property
     def name(self) -> str:
         return "Groq/SLM"
@@ -393,6 +478,12 @@ class MockSLMProvider(BaseSLMProvider):
             "latency_ms": 1.0,
             "provider": "mock"
         }
+    
+    def complete(self, prompt: str, **kwargs) -> str:
+        return f"Mock response for: {prompt[:50]}..."
+        
+    def chat(self, messages: List[Dict], **kwargs) -> str:
+        return f"Mock chat response"
     
     @property
     def name(self) -> str:

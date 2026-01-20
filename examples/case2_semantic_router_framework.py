@@ -30,7 +30,6 @@ from agentic_framework import AgenticAI
 
 def create_stripe_refund(user_id: str, amount: float):
     """Stripe MCP: Create refund"""
-    time.sleep(0.2)
     refund_id = f"refund_{random.randint(1000, 9999)}"
     return {
         'success': True,
@@ -42,7 +41,6 @@ def create_stripe_refund(user_id: str, amount: float):
 
 def cancel_subscription(user_id: str):
     """Subscription MCP: Cancel subscription"""
-    time.sleep(0.1)
     return {
         'success': True,
         'subscription_id': f'sub_{user_id}',
@@ -53,7 +51,6 @@ def cancel_subscription(user_id: str):
 
 def search_error_logs(user_id: str, query: str):
     """Sentry MCP: Search error logs"""
-    time.sleep(0.15)
     return {
         'success': True,
         'errors': [
@@ -70,7 +67,6 @@ def search_error_logs(user_id: str, query: str):
 
 def get_pricing_info(plan: str):
     """Pricing API: Get plan details"""
-    time.sleep(0.1)
     pricing = {
         'basic': {'price': 19.99, 'features': ['10 projects', 'Basic support']},
         'pro': {'price': 49.99, 'features': ['Unlimited projects', 'Priority support', 'Analytics']},

@@ -33,7 +33,6 @@ from agentic_framework import AgenticAI
 
 def stripe_create_refund(user_id, amount):
     """Stripe MCP: Create refund"""
-    time.sleep(0.2)
     return {
         'success': True,
         'refund_id': f'refund_{random.randint(10000, 99999)}',
@@ -45,7 +44,6 @@ def stripe_create_refund(user_id, amount):
 
 def slack_notify_finance(message):
     """Slack MCP: Notify finance team"""
-    time.sleep(0.1)
     return {
         'success': True,
         'channel': '#finance',
@@ -56,7 +54,6 @@ def slack_notify_finance(message):
 
 def database_get_user(user_id):
     """Database MCP: Get user data"""
-    time.sleep(0.1)
     return {
         'success': True,
         'user': {
@@ -72,7 +69,6 @@ def database_get_user(user_id):
 
 def sentry_search_errors(user_id):
     """Sentry MCP: Search error logs"""
-    time.sleep(0.15)
     return {
         'success': True,
         'errors': [
@@ -91,7 +87,6 @@ def sentry_search_errors(user_id):
 
 def pricing_api_get_plan(plan_name):
     """Pricing API: Get plan details"""
-    time.sleep(0.1)
     
     plans = {
         'basic': {

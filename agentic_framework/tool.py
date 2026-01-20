@@ -46,10 +46,20 @@ class Tool:
     
     def get_definition(self) -> Dict:
         """Get tool definition for LLM."""
+        import inspect
+        sig = inspect.signature(self.func)
+        params = {}
+        for name, param in sig.parameters.items():
+            params[name] = {
+                "type": str(param.annotation) if param.annotation != inspect.Parameter.empty else "any",
+                "default": str(param.default) if param.default != inspect.Parameter.empty else None,
+                "required": param.default == inspect.Parameter.empty
+            }
+            
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {}  # TODO: Extract from function signature
+            "parameters": params
         }
     
     def get_metrics(self) -> Dict:

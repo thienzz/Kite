@@ -82,7 +82,6 @@ def main():
     def load_invoice(state):
         """Step 1: Load invoice (mock data for demo)"""
         print("     Loading invoice...")
-        time.sleep(0.1)
         
         # Mock invoice data
         state['raw_text'] = """
