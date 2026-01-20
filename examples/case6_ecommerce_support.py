@@ -16,14 +16,21 @@ import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
+from kite import Kite
 
 async def main():
     print("="*80)
     print("CASE STUDY 6: E-COMMERCE CUSTOMER SUPPORT (PARALLEL)")
     print("="*80)
 
-    ai = AgenticAI()
+    # Configure framework to use llama3 for everything
+    # Use llama3 as default (since qwen2 is missing on this machine)
+    # You can override this with SLM_SQL_MODEL=qwen2 env variable
+    ai = Kite(config={
+        "slm_sql_model": os.getenv("SLM_SQL_MODEL", "llama3"),
+        "slm_classifier_model": os.getenv("SLM_CLASSIFIER_MODEL", "llama3"),
+        "slm_code_review_model": os.getenv("SLM_CODE_REVIEW_MODEL", "llama3")
+    })
     
     print("\n[OK] Building customer support system...")
     
@@ -65,46 +72,37 @@ async def main():
         tools=[inventory_tool]
     )
 
-    # 3. Configure routing
-    routes = {
-        "order_status": ["order", "status", "tracking", "where is"],
-        "refund": ["refund", "return", "money back", "cancel"],
-        "product": ["product", "stock", "available", "buy"]
-    }
-    
-    for route_name, keywords in routes.items():
-        for keyword in keywords:
-            ai.semantic_router.add_route(route_name, keyword)
+    # 3. Configure Aggregator Router (The "Brain" / Central Supervisor)
+    print("\n[AI] Configuring supervisor router...")
+    ai.aggregator_router.register_agent("order", order_agent, "Handles order status, tracking, and delivery inquiries.")
+    ai.aggregator_router.register_agent("refund", refund_agent, "Handles refund requests, returns, and money-back claims.")
+    ai.aggregator_router.register_agent("product", product_agent, "Handles product information, stock levels, and inventory.")
 
-    # 4. Define parallel tasks
-    # We want to process these queries simultaneously
-    test_queries = [
-        {"input": "Where is my order ORD-001?", "agent": order_agent},
-        {"input": "I want a refund for order ORD-002", "agent": refund_agent},
-        {"input": "Is the new laptop in stock?", "agent": product_agent}
+    # 4. Define independent customer queries
+    # No hardcoded agent mapping - the Router will decide!
+    queries = [
+        "Where is my order ORD-001?",
+        "I want a refund for order ORD-002",
+        "Is the new laptop in stock?"
     ]
     
-    print(f"\n[EXEC] Processing {len(test_queries)} queries in PARALLEL...")
+    print(f"\n[EXEC] Processing {len(queries)} independent queries via SUPERVISOR...")
     start_time = time.time()
     
-    # Using the new process_parallel framework feature
-    results = await ai.process_parallel(test_queries)
+    # Execute routing for each query in parallel
+    # Each call to .route() uses an LLM to decide which agent(s) to use
+    tasks = [ai.aggregator_router.route(q) for q in queries]
+    results = await asyncio.gather(*tasks)
     
     end_time = time.time()
-    print(f"\n[OK] Parallel processing completed in {end_time - start_time:.2f}s")
+    print(f"\n[OK] Processing completed in {end_time - start_time:.2f}s")
     
     # 5. Print results
     for i, result in enumerate(results):
-        query = test_queries[i]['input']
         print(f"\n   --- Interaction {i+1} ---")
-        print(f"   Customer: {query}")
-        print(f"   Agent: {result.get('agent')}")
-        
-        if result.get('success'):
-            response = result.get('response', "No response")
-            print(f"   Response: {response[:100]}...")
-        else:
-            print(f"   [FAILED] Error: {result.get('error')}")
+        print(f"   Customer: {result.get('query')}")
+        print(f"   Agents used: {', '.join(result.get('agents_used', []))}")
+        print(f"   Response: {result.get('response', 'No response')}")
 
 if __name__ == "__main__":
     try:

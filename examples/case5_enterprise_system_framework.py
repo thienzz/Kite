@@ -24,7 +24,7 @@ import asyncio
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
+from kite import Kite
 
 
 # ============================================================================
@@ -122,7 +122,7 @@ async def main():
     # SETUP: Initialize Full Framework
     # ========================================================================
     print("\n[START] Initializing FULL framework stack...")
-    ai = AgenticAI()
+    ai = Kite()
     print("   [OK] Framework initialized with ALL features")
     
     # ========================================================================
@@ -191,7 +191,7 @@ Available MCP tools:
 Be professional and empathetic. Confirm all actions.""",
         tools=[stripe_tool, slack_tool, db_tool],
         slm_provider="ollama",
-        slm_model="qwen3:8b"
+        slm_model="llama3"
     )
     
     # Technical Worker
@@ -208,7 +208,7 @@ Available MCP tools:
 Provide clear, actionable solutions.""",
         tools=[db_tool, sentry_tool],
         slm_provider="ollama",
-        slm_model="qwen3:8b"
+        slm_model="llama3"
     )
     
     # Sales Worker
@@ -225,7 +225,7 @@ Available MCP tools:
 Be helpful, highlight value, not pushy.""",
         tools=[db_tool, pricing_tool],
         slm_provider="ollama",
-        slm_model="qwen3:8b"
+        slm_model="llama3"
     )
     
     print("   [OK] Created 3 worker agents (SLM-powered)")

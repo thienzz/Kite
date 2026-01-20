@@ -14,8 +14,8 @@ import asyncio
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
-from agentic_framework.safety import KillSwitch
+from kite import Kite
+from kite.safety import KillSwitch
 
 # ============================================================================
 # CUSTOM RESEARCH TOOLS (Can also use ai.tools['web_search'])
@@ -50,7 +50,7 @@ async def main():
     
     # 1. Initialize Framework
     print("\n[START] Initializing framework...")
-    ai = AgenticAI()
+    ai = Kite()
     
     # 2. Setup Kill Switch (from framework)
     print("\n[WARN]  Setting up framework KillSwitch...")

@@ -7,15 +7,15 @@ import asyncio
 # Ensure framework is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from agentic_framework.core import AgenticAI
-from agentic_framework.memory.vector_memory import VectorMemory
-from agentic_framework.memory.advanced_rag import AdvancedRAG
-from agentic_framework.tools.mcp.database_mcp import DatabaseMCP
-from agentic_framework.data_loaders import DocumentLoader
-from agentic_framework.llm_providers import MockLLMProvider
+from kite.core import Kite
+from kite.memory.vector_memory import VectorMemory
+from kite.memory.advanced_rag import AdvancedRAG
+from kite.tools.mcp.database_mcp import DatabaseMCP
+from kite.data_loaders import DocumentLoader
+from kite.llm_providers import MockLLMProvider
 
 class TestProductionFeatures(unittest.TestCase):
-    @patch('agentic_framework.embedding_providers.EmbeddingFactory.auto_detect')
+    @patch('kite.embedding_providers.EmbeddingFactory.auto_detect')
     def setUp(self, mock_auto_detect):
         # Mock the auto-detected embedding provider
         self.mock_embed_provider = MagicMock()
@@ -27,7 +27,7 @@ class TestProductionFeatures(unittest.TestCase):
         self.memory = VectorMemory(backend="memory")
         self.memory.embedding_provider = self.mock_embed_provider
         
-        self.ai = AgenticAI(config={"llm_provider": "mock", "vector_backend": "memory"})
+        self.ai = Kite(config={"llm_provider": "mock", "vector_backend": "memory"})
         self.ai.llm = self.mock_llm
         self.ai.vector_memory.embedding_provider = self.mock_embed_provider
 
@@ -73,7 +73,7 @@ class TestProductionFeatures(unittest.TestCase):
 
     def test_aggregator_router_integration(self):
         """Test router with mock agents."""
-        from agentic_framework.routing.aggregator_router import AggregatorRouter
+        from kite.routing.aggregator_router import AggregatorRouter
         router = AggregatorRouter(llm=self.mock_llm)
         # Test decomposition (mocked response from LLM would be needed for real test)
         # For now just verify it initializes

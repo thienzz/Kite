@@ -3,6 +3,6 @@ import pytest
 
 @pytest.fixture
 def ai():
-    """Fixture for AgenticAI instance."""
-    from agentic_framework import AgenticAI
-    return AgenticAI()
+    """Fixture for Kite instance."""
+    from kite import Kite
+    return Kite()

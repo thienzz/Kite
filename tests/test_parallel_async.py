@@ -1,11 +1,11 @@
 import pytest
 import asyncio
 import time
-from agentic_framework import AgenticAI
+from kite import Kite
 
 def test_process_parallel():
     async def run_test():
-        ai = AgenticAI()
+        ai = Kite()
         
         # Create a mock tool
         async def delayed_tool(input_val):

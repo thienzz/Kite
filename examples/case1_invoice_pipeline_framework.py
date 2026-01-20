@@ -20,7 +20,7 @@ import time
 # Add framework to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
+from kite import Kite
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from typing import List, Optional
 import json
@@ -68,7 +68,7 @@ def main():
     # SETUP: Initialize Framework
     # ========================================================================
     print("\n[START] Initializing framework...")
-    ai = AgenticAI()
+    ai = Kite()
     print("   [OK] Framework initialized")
     
     # ========================================================================
@@ -134,11 +134,24 @@ Rules:
         
         for attempt in range(max_retries):
             try:
-                # Clean JSON from markdown
+                # Robust JSON cleaning
+                raw_json = raw_json.strip()
                 if '```json' in raw_json:
                     raw_json = raw_json.split('```json')[1].split('```')[0].strip()
                 elif '```' in raw_json:
                     raw_json = raw_json.split('```')[1].split('```')[0].strip()
+                
+                # If still messy, find the first '{' and last '}'
+                try:
+                    start_idx = raw_json.find('{')
+                    end_idx = raw_json.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        raw_json = raw_json[start_idx:end_idx + 1]
+                except:
+                    pass
+                
+                if not raw_json.strip():
+                    raise ValueError("Empty or invalid LLM response")
                 
                 data_dict = json.loads(raw_json)
                 validated = InvoiceData(**data_dict)
@@ -155,14 +168,14 @@ Rules:
                 
                 # Self-healing: Ask LLM to fix
                 print("     Asking LLM to fix...")
-                raw_json = ai.complete(f"""
-Fix this JSON validation error:
+                raw_json = ai.complete(f"""Fix this JSON validation error. 
+IMPORTANT: Return ONLY the raw JSON string. Do not include any explanations, markdown blocks, or thoughts.
 
-JSON: {raw_json}
+Current JSON: {raw_json}
 
 Error: {e}
 
-Return ONLY corrected JSON.""")
+Corrected JSON:""")
         
         raise RuntimeError("Validation failed")
     
@@ -221,20 +234,24 @@ Items: {len(invoice_data.get('line_items', []))}
         elapsed = time.time() - start_time
         
         # Get final data
-        final = result['results']['store']
-        
-        if final.get('duplicate'):
-            print("\n[WARN]  DUPLICATE DETECTED")
-            print(f"   Invoice already processed: {final['validated_data']['invoice_number']}")
+        if result.status == result.status.COMPLETED:
+            final = result.results['store']
+            
+            if final.get('duplicate'):
+                print("\n[WARN]  DUPLICATE DETECTED")
+                print(f"   Invoice already processed: {final['validated_data']['invoice_number']}")
+            else:
+                print("\n[OK] INVOICE PROCESSED SUCCESSFULLY")
+                print("-" * 80)
+                print(f"Invoice Number: {final['validated_data']['invoice_number']}")
+                print(f"Vendor: {final['validated_data']['vendor_name']}")
+                print(f"Amount: {final['validated_data']['currency']} {final['validated_data']['amount']:,.2f}")
+                print(f"Date: {final['validated_data']['invoice_date']}")
+                print(f"Items: {len(final['validated_data'].get('line_items', []))}")
+                print("-" * 80)
         else:
-            print("\n[OK] INVOICE PROCESSED SUCCESSFULLY")
-            print("-" * 80)
-            print(f"Invoice Number: {final['validated_data']['invoice_number']}")
-            print(f"Vendor: {final['validated_data']['vendor_name']}")
-            print(f"Amount: {final['validated_data']['currency']} {final['validated_data']['amount']:,.2f}")
-            print(f"Date: {final['validated_data']['invoice_date']}")
-            print(f"Items: {len(final['validated_data'].get('line_items', []))}")
-            print("-" * 80)
+            print(f"\n[ERROR] Pipeline failed with status: {result.status.value}")
+            print(f"Errors: {result.errors}")
         
         print(f"Processing Time: {elapsed:.2f}s")
         
@@ -251,12 +268,16 @@ Items: {len(invoice_data.get('line_items', []))}
     print("\n  Processing same invoice again...")
     
     result2 = pipeline.execute({'invoice_id': 'INV-001'})
-    final2 = result2['results']['store']
     
-    if final2.get('duplicate'):
-        print("   [OK] Idempotency working! Duplicate prevented.")
+    if result2.status == result2.status.COMPLETED:
+        final2 = result2.results['store']
+        
+        if final2.get('duplicate'):
+            print("   [OK] Idempotency working! Duplicate prevented.")
+        else:
+            print("   [ERROR] Warning: Duplicate was not detected")
     else:
-        print("   [ERROR] Warning: Duplicate was not detected")
+        print(f"   [ERROR] Pipeline failed with status: {result2.status.value}")
     
     # ========================================================================
     # STEP 4: Semantic Search
@@ -318,7 +339,7 @@ Items: {len(invoice_data.get('line_items', []))}
 Summary - Framework Features Used:
 
 1. Core Components:
-   [OK] AgenticAI core initialization
+   [OK] Kite core initialization
    [OK] LLM provider integration
    
 2. Pipeline System:

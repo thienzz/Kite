@@ -21,7 +21,7 @@ import asyncio
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
+from kite import Kite
 
 
 # ============================================================================
@@ -88,7 +88,7 @@ async def main():
     # SETUP: Initialize Framework
     # ========================================================================
     print("\n[START] Initializing framework...")
-    ai = AgenticAI()
+    ai = Kite()
     print("   [OK] Framework initialized")
     
     # ========================================================================
@@ -148,7 +148,7 @@ Available tools:
 Be professional, empathetic, and helpful. Always confirm actions.""",
         tools=[refund_tool, cancel_tool],
         llm_provider="ollama",
-        llm_model="qwen3:8b"
+        llm_model="llama3"
     )
     
     # Technical Agent
@@ -164,7 +164,7 @@ Available tools:
 Provide clear, step-by-step solutions.""",
         tools=[logs_tool],
         llm_provider="ollama",
-        llm_model="qwen3:8b"
+        llm_model="llama3"
     )
     
     # Sales Agent
@@ -180,7 +180,7 @@ Available tools:
 Be helpful and highlight value, not pushy.""",
         tools=[pricing_tool],
         llm_provider="ollama",
-        llm_model="qwen3:8b"
+        llm_model="llama3"
     )
     
     print("   [OK] Created 3 specialized agents")

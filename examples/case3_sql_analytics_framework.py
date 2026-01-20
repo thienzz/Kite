@@ -20,7 +20,7 @@ import sqlite3
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentic_framework import AgenticAI
+from kite import Kite
 
 
 # ============================================================================
@@ -194,7 +194,7 @@ def main():
     # SETUP: Initialize Framework & Database
     # ========================================================================
     print("\n[START] Initializing framework...")
-    ai = AgenticAI()
+    ai = Kite()
     print("   [OK] Framework initialized")
     
     print("\n  Setting up demo database...")

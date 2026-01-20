@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from agentic_framework import AgenticAI
+from kite import AgenticAI
 
 async def benchmark_groq():
-    load_dotenv()
+    load_dotenv(".kite.env")
     if not os.getenv("GROQ_API_KEY"):
         print("Please set GROQ_API_KEY in .env to run this benchmark.")
         return

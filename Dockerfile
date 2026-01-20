@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy framework
-COPY agentic_framework/ ./agentic_framework/
+COPY kite/ ./kite/
 COPY examples/ ./examples/
 COPY docs/ ./docs/
 
@@ -32,7 +32,7 @@ ENV EMBEDDING_PROVIDER=sentence-transformers
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "from agentic_framework import AgenticAI; AgenticAI()" || exit 1
+    CMD python -c "from kite import AgenticAI; AgenticAI()" || exit 1
 
 # Default command
-CMD ["python", "-m", "agentic_framework"]
+CMD ["python", "-m", "kite"]

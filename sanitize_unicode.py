@@ -49,7 +49,7 @@ def replace_unicode(directory):
 
 if __name__ == "__main__":
     import sys
-    target = 'agentic_framework'
+    target = 'kite'
     if len(sys.argv) > 1:
         target = sys.argv[1]
     replace_unicode(target)

@@ -1,4 +1,4 @@
-from agentic_framework import AgenticAI
+from kite import AgenticAI
 
 def test_config():
     ai = AgenticAI()

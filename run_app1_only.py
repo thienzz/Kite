@@ -6,7 +6,7 @@ import numpy as np
 # Add parent directory to path to import framework
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from agentic_framework import AgenticAI
+from kite import AgenticAI
 
 import asyncio
 

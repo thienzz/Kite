@@ -1,8 +1,8 @@
 import pytest
 import asyncio
-from agentic_framework import AgenticAI
-from agentic_framework.safety.kill_switch import KillSwitch
-from agentic_framework.agents.react_agent import ReActAgent
+from kite import Kite
+from kite.safety.kill_switch import KillSwitch
+from kite.agents.react_agent import ReActAgent
 
 def test_kill_switch_iterations():
     ks = KillSwitch(max_iterations=5)
@@ -31,19 +31,19 @@ def test_kill_switch_loop():
     assert "Stuck in loop" in reason
 
 def test_contrib_tools_registry():
-    ai = AgenticAI()
+    ai = Kite()
     assert ai.tools.get("web_search") is not None
     assert ai.tools.get("calculator") is not None
     assert ai.tools.get("get_datetime") is not None
 
 def test_calculator_tool():
-    ai = AgenticAI()
+    ai = Kite()
     calc = ai.tools.get("calculator")
     result = calc.execute(expression="2 + 3 * 4")
     assert result["result"] == 14
 
 def test_react_agent_creation():
-    ai = AgenticAI()
+    ai = Kite()
     calc_tool = ai.tools.get("calculator")
     agent = ai.create_react_agent(
         name="TestBot",

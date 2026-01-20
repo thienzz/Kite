@@ -1,15 +1,15 @@
 """
-Comprehensive test suite for AgenticAI Framework.
+Comprehensive test suite for Kite Framework.
 Coverage target: >80%
 """
 
 import pytest
 import time
-from agentic_framework import AgenticAI
-from agentic_framework.safety import CircuitBreaker, IdempotencyManager
-from agentic_framework.memory import VectorMemory, SessionMemory, GraphRAG
-from agentic_framework.monitoring import MetricsCollector, Tracer
-from agentic_framework.ab_testing import ABTestManager, Variant
+from kite import Kite
+from kite.safety import CircuitBreaker, IdempotencyManager
+from kite.memory import VectorMemory, SessionMemory, GraphRAG
+from kite.monitoring import MetricsCollector, Tracer
+from kite.ab_testing import ABTestManager, Variant
 
 
 class TestFrameworkInitialization:
@@ -17,7 +17,7 @@ class TestFrameworkInitialization:
     
     def test_basic_init(self):
         """Test basic initialization."""
-        ai = AgenticAI()
+        ai = Kite()
         assert ai is not None
         assert hasattr(ai, 'llm')
         assert hasattr(ai, 'embeddings')
@@ -28,7 +28,7 @@ class TestFrameworkInitialization:
             'llm_provider': 'ollama',
             'embedding_provider': 'sentence-transformers'
         }
-        ai = AgenticAI(config=config)
+        ai = Kite(config=config)
         assert ai.config['llm_provider'] == 'ollama'
 
 
@@ -37,28 +37,38 @@ class TestSafetyPatterns:
     
     def test_circuit_breaker(self):
         """Test circuit breaker."""
-        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=1)
+        from kite.safety import CircuitBreakerConfig
+        cb = CircuitBreaker(
+            name="test_cb",
+            config=CircuitBreakerConfig(failure_threshold=3, timeout_seconds=1)
+        )
         
         # Should be closed initially
-        can_execute, msg = cb.can_execute()
-        assert can_execute is True
+        from kite.safety import CircuitState
+        assert cb.state == CircuitState.CLOSED
         
         # Record failures
         for _ in range(3):
-            cb.record_failure()
+            cb._on_failure()
         
         # Should be open now
-        can_execute, msg = cb.can_execute()
-        assert can_execute is False
+        assert cb.state == CircuitState.OPEN
         
         # Wait for recovery
         time.sleep(1.1)
-        can_execute, msg = cb.can_execute()
-        assert can_execute is True
+        # Call to trigger reset check
+        try:
+            cb.call(lambda: None)
+        except:
+            pass
+        assert cb.state == CircuitState.HALF_OPEN or cb.state == CircuitState.CLOSED
     
     def test_idempotency(self):
         """Test idempotency."""
-        idempotency = IdempotencyManager(storage_backend='memory')
+        from kite.safety import IdempotencyConfig
+        idempotency = IdempotencyManager(
+            config=IdempotencyConfig(storage_backend='memory')
+        )
         
         call_count = [0]
         
@@ -67,19 +77,22 @@ class TestSafetyPatterns:
             return "result"
         
         # First call
-        result1, cached1 = idempotency.get_or_execute(
-            "key1", expensive_operation
-        )
+        key1 = idempotency.generate_id("op", {"id": "1"})
+        if not idempotency.is_duplicate(key1):
+            res = expensive_operation()
+            idempotency.store_result(key1, res)
+        
+        result1 = idempotency.get_result(key1)
         assert result1 == "result"
-        assert cached1 is False
         assert call_count[0] == 1
         
         # Second call (should be cached)
-        result2, cached2 = idempotency.get_or_execute(
-            "key1", expensive_operation
-        )
+        if idempotency.is_duplicate(key1):
+            result2 = idempotency.get_result(key1)
+        else:
+            result2 = expensive_operation()
+            
         assert result2 == "result"
-        assert cached2 is True
         assert call_count[0] == 1  # Not called again
 
 
@@ -88,24 +101,31 @@ class TestMemorySystems:
     
     def test_session_memory(self):
         """Test session memory."""
-        session = SessionMemory(max_messages=5)
+        session = SessionMemory(window_size=5)
         
-        session.add_message("session1", "user", "Hello")
-        session.add_message("session1", "assistant", "Hi")
+        session.add_message("user", "Hello")
+        session.add_message("assistant", "Hi")
         
-        context = session.get_context("session1")
-        assert len(context) == 2
-        assert context[0]['content'] == "Hello"
+        messages = session.get_messages()
+        assert len(messages) == 2
+        assert messages[0]['content'] == "Hello"
     
     def test_graph_rag(self):
         """Test graph RAG."""
         graph = GraphRAG()
         
-        graph.add_relationship("user", "bought", "product")
-        graph.add_relationship("product", "manufactured_by", "company")
+        from kite.memory.graph_rag import Entity, Relationship
         
-        neighbors = graph.get_neighbors("user")
-        assert "product" in neighbors
+        # Add entities first
+        graph.graph.add_entity(Entity("user", "person", "User"))
+        graph.graph.add_entity(Entity("product", "product", "Product"))
+        graph.graph.add_entity(Entity("company", "company", "Company"))
+        
+        graph.graph.add_relationship(Relationship("user", "product", "bought"))
+        graph.graph.add_relationship(Relationship("product", "company", "manufactured_by"))
+        
+        neighbors = graph.graph.get_neighbors("user")
+        assert any(e.id == "product" for e in neighbors)
 
 
 class TestMonitoring:
@@ -183,7 +203,7 @@ class TestAgentSystem:
     
     def test_create_agent(self):
         """Test agent creation."""
-        ai = AgenticAI()
+        ai = Kite()
         
         agent = ai.create_agent(
             name="TestAgent",
@@ -196,7 +216,7 @@ class TestAgentSystem:
     
     def test_create_tool(self):
         """Test tool creation."""
-        ai = AgenticAI()
+        ai = Kite()
         
         def test_func(x):
             return x * 2
@@ -216,7 +236,7 @@ class TestWorkflows:
     
     def test_create_workflow(self):
         """Test workflow creation."""
-        ai = AgenticAI()
+        ai = Kite()
         
         workflow = ai.create_workflow("test_workflow")
         assert workflow is not None
@@ -228,7 +248,7 @@ class TestIntegration:
     
     def test_end_to_end_flow(self):
         """Test complete flow."""
-        ai = AgenticAI()
+        ai = Kite()
         
         # Create agent with tool
         def search(query):
@@ -246,4 +266,4 @@ class TestIntegration:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--cov=agentic_framework"])
+    pytest.main([__file__, "-v", "--cov=kite"])

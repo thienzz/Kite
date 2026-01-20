@@ -31,7 +31,7 @@ pip install -r requirements.txt
 ### Basic Usage
 
 ```python
-from agentic_framework import AgenticAI
+from kite import AgenticAI
 
 # 1. Initialize Framework
 ai = AgenticAI()
@@ -60,7 +60,7 @@ analyst = ai.create_agent(
 
 | Component | Description |
 | :--- | :--- |
-| **`AgenticAI`** | The central orchestrator that manages providers and services. |
+| `kite` | Core package of the framework. |
 | **`Agent`** | High-level persona-driven entities that use tools and models. |
 | **`Pipeline`** | Linear workflows for deterministic data processing. |
 | **`VectorMemory`** | RAG-ready semantic storage and retrieval system. |
