@@ -98,10 +98,29 @@ Items:
 Total: $1,250.00
         """
         return state
-    
+
+    # Step: Check Idempotency (Prevent redundant LLM calls)
+    def check_idempotency(state):
+        """Pre-check if invoice already processed"""
+        import re
+        match = re.search(r"#(INV-2025\d{4}-\d{3})", state.get('raw_text', ''))
+        if match:
+            invoice_num = match.group(1)
+            idempotency_key = f"invoice:{invoice_num}"
+            if ai.idempotency.is_duplicate(idempotency_key):
+                print(f"   [WARN]  Already processed: {invoice_num}")
+                state['duplicate'] = True
+                state['validated_data'] = {'invoice_number': invoice_num}
+                return state
+        
+        state['duplicate'] = False
+        return state
+
     # Step 2: Extract with LLM (Probabilistic Core)
     def extract_with_llm(state):
         """Step 2: Extract structured data with LLM"""
+        if state.get('duplicate'):
+            return state
         print("     Extracting data with LLM...")
         
         schema = InvoiceData.model_json_schema()
@@ -116,7 +135,8 @@ JSON Schema required:
 Rules:
 1. invoice_number: Format XXX-YYYYMMDD-NNN
 2. All dates YYYY-MM-DD format
-3. amount as number"""
+3. amount as number
+4. Return ONLY the JSON object. No explanation text."""
 
         # Use framework's LLM (protected by circuit breaker)
         response = ai.complete(prompt)
@@ -127,6 +147,8 @@ Rules:
     # Step 3: Validate (Deterministic Shell)
     def validate_data(state):
         """Step 3: Validate with Pydantic + Self-healing"""
+        if state.get('duplicate'):
+            return state
         print("     Validating data...")
         
         max_retries = 3
@@ -157,7 +179,12 @@ Rules:
                 validated = InvoiceData(**data_dict)
                 
                 state['validated_data'] = validated.model_dump()
-                print(f"   [OK] Validation passed")
+                
+                if attempt > 0:
+                    print(f"   [OK] Self-healing successful! Corrected data:")
+                    print(json.dumps(state['validated_data'], indent=7))
+                else:
+                    print(f"   [OK] Validation passed")
                 return state
                 
             except Exception as e:
@@ -187,12 +214,7 @@ Corrected JSON:""")
         invoice_data = state['validated_data']
         invoice_number = invoice_data['invoice_number']
         
-        # Idempotency check
-        idempotency_key = f"invoice:{invoice_number}"
-        
-        if ai.idempotency.is_duplicate(idempotency_key):
-            print(f"   [WARN]  Already processed: {invoice_number}")
-            state['duplicate'] = True
+        if state.get('duplicate'):
             return state
         
         # Store in vector memory
@@ -205,6 +227,7 @@ Items: {len(invoice_data.get('line_items', []))}
         """.strip()
         
         ai.vector_memory.add_document(invoice_number, document_text)
+        idempotency_key = f"invoice:{invoice_number}"
         ai.idempotency.store_result(idempotency_key, True)
         
         state['duplicate'] = False
@@ -213,6 +236,7 @@ Items: {len(invoice_data.get('line_items', []))}
     
     # Register all steps
     pipeline.add_step("load", load_invoice)
+    pipeline.add_step("check", check_idempotency)
     pipeline.add_step("extract", extract_with_llm)
     pipeline.add_step("validate", validate_data)
     pipeline.add_step("store", store_invoice)
@@ -328,42 +352,10 @@ Items: {len(invoice_data.get('line_items', []))}
     print("\nVector Memory:")
     print(f"   {metrics.get('vector_memory', {})}")
     
-    # ========================================================================
-    # SUMMARY
-    # ========================================================================
+    
     print("\n" + "="*80)
     print("[OK] CASE STUDY 1 COMPLETE")
     print("="*80)
-    
-    print("""
-Summary - Framework Features Used:
-
-1. Core Components:
-   [OK] Kite core initialization
-   [OK] LLM provider integration
-   
-2. Pipeline System:
-   [OK] DeterministicPipeline (4 steps)
-   [OK] Linear workflow execution
-   [OK] State passing between steps
-   
-3. Safety Patterns:
-   [OK] Circuit Breaker (LLM failure protection)
-   [OK] Idempotency Manager (duplicate prevention)
-   [OK] Self-healing validation (retry with error correction)
-   
-4. Memory Systems:
-   [OK] Vector Memory (document storage)
-   [OK] Semantic search (find similar invoices)
-   
-5. Validation:
-   [OK] Pydantic schemas (type safety)
-   [OK] Business logic validation
-   [OK] Automatic retry on errors
-
-This demonstrates a PRODUCTION-READY invoice processing pipeline
-with all safety guarantees and error handling!
-    """)
 
 
 if __name__ == "__main__":

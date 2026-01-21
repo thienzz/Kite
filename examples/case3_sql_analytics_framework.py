@@ -436,49 +436,9 @@ Expected Production Metrics (10k queries/day):
 - Uptime: 99.9%
     """)
     
-    # ========================================================================
-    # SUMMARY
-    # ========================================================================
     print("\n" + "="*80)
     print("[OK] CASE STUDY 3 COMPLETE")
     print("="*80)
-    
-    print("""
-Summary - Framework Features Used:
-
-1. SLM Specialist:
-   [OK] SQLGeneratorSLM (fine-tuned for SQL)
-   [OK] 200x cheaper than GPT-4
-   [OK] 10x faster inference
-   [OK] Higher accuracy (95% vs 89%)
-
-2. Safety Patterns:
-   [OK] SQL validation (read-only)
-   [OK] Keyword blocking (DROP, DELETE, etc)
-   [OK] Circuit breaker protection
-   [OK] Query timeout enforcement
-
-3. Database Integration:
-   [OK] SQLite demo (replace with PostgreSQL/MySQL)
-   [OK] Schema introspection
-   [OK] Safe query execution
-   [OK] Result formatting
-
-4. Cost Optimization:
-   [OK] SLM vs LLM comparison
-   [OK] Real cost tracking
-   [OK] Savings calculation
-   [OK] Production scaling estimates
-
-Key Takeaway:
-SLM specialists outperform general LLMs on narrow tasks!
-- Lower cost (200x)
-- Faster speed (10x)
-- Better accuracy (6% improvement)
-- Cannot be distracted by non-SQL tasks
-
-This is PRODUCTION-READY for high-volume SQL generation!
-    """)
 
 
 if __name__ == "__main__":

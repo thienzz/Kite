@@ -93,6 +93,7 @@ class Kite:
     
     def _load_config(self) -> Dict:
         from dotenv import load_dotenv
+        load_dotenv() # Load standard .env
         load_dotenv(".kite.env")
         return {
             'llm_provider': os.getenv('LLM_PROVIDER', 'ollama'),

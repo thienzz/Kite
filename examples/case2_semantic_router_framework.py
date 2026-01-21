@@ -355,51 +355,9 @@ Be helpful and highlight value, not pushy.""",
     print(f"   Total Routes: {router_stats.get('total_routes', 0)}")
     print(f"   Cache Hit Rate: {router_stats.get('cache_hit_rate', 0):.1f}%")
     
-    # ========================================================================
-    # SUMMARY
-    # ========================================================================
     print("\n" + "="*80)
     print("[OK] CASE STUDY 2 COMPLETE")
     print("="*80)
-    
-    print("""
-Summary - Framework Features Used:
-
-1. Routing System:
-   [OK] SemanticRouter (intent classification)
-   [OK] Keyword-based routing
-   [OK] Confidence scoring
-   [OK] Automatic caching
-   
-2. Multi-Agent System:
-   [OK] 3 specialized agents
-   [OK] Agent-specific tools
-   [OK] Context passing
-   [OK] Metrics tracking
-   
-3. Tool Integration:
-   [OK] MCP-style tools (Stripe, Sentry)
-   [OK] Tool registry
-   [OK] Safe tool execution
-   
-4. Performance:
-   [OK] Response caching
-   [OK] Fast routing (< 50ms)
-   [OK] Parallel-ready architecture
-   
-5. Production Features:
-   [OK] Error handling
-   [OK] Metrics collection
-   [OK] Cost optimization (SLM workers)
-
-This demonstrates a PRODUCTION-READY customer support system
-with intelligent routing and specialized handling!
-
-Cost Comparison:
-- Single GPT-4 agent: $0.20/request
-- Router + SLM agents: $0.01/request
-- Savings: 95% (20x cheaper)
-    """)
 
 
 if __name__ == "__main__":
