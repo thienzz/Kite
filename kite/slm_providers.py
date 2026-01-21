@@ -87,11 +87,13 @@ class OllamaSLMProvider(BaseSLMProvider):
                  sql_model: Optional[str] = None,
                  classifier_model: Optional[str] = None,
                  code_review_model: Optional[str] = None,
-                 base_url: str = "http://localhost:11434"):
+                 model: Optional[str] = None,
+                 base_url: str = "http://localhost:11434",
+                 **kwargs):
         
-        self.sql_model = sql_model or "llama3"
-        self.classifier_model = classifier_model or "llama3"
-        self.code_review_model = code_review_model or "llama3"
+        self.sql_model = model or sql_model or "llama3"
+        self.classifier_model = model or classifier_model or "llama3"
+        self.code_review_model = model or code_review_model or "llama3"
         self.base_url = base_url
         self.logger = logging.getLogger("OllamaSLM")
         
@@ -300,7 +302,13 @@ class GroqSLMProvider(BaseSLMProvider):
     Speed: 500+ tokens/sec (50-100x faster than traditional)
     """
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, 
+                 api_key: Optional[str] = None,
+                 sql_model: Optional[str] = None,
+                 classifier_model: Optional[str] = None,
+                 code_review_model: Optional[str] = None,
+                 model: Optional[str] = None,
+                 **kwargs):
         import os
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         self.logger = logging.getLogger("GroqSLM")
@@ -315,10 +323,10 @@ class GroqSLMProvider(BaseSLMProvider):
         except ImportError:
             raise ImportError("pip install groq")
         
-        # Use fast models
-        self.sql_model = "llama3-8b-8192"
-        self.classifier_model = "llama3-8b-8192"
-        self.code_review_model = "llama3-70b-8192"
+        # Use unified model if provided, else specialized, else defaults
+        self.sql_model = model or sql_model or "llama-3.1-8b-instant"
+        self.classifier_model = model or classifier_model or "llama-3.1-8b-instant"
+        self.code_review_model = model or code_review_model or "llama-3.1-8b-instant"
     
     def _chat(self, model: str, prompt: str, temperature: float = 0) -> str:
         """Chat with Groq."""
@@ -497,7 +505,13 @@ class TogetherSLMProvider(BaseSLMProvider):
     Best for: Access to many specialized opensource models
     """
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, 
+                 api_key: Optional[str] = None,
+                 sql_model: Optional[str] = None,
+                 classifier_model: Optional[str] = None,
+                 code_review_model: Optional[str] = None,
+                 model: Optional[str] = None,
+                 **kwargs):
         import os
         self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
         self.logger = logging.getLogger("TogetherSLM")
@@ -513,10 +527,10 @@ class TogetherSLMProvider(BaseSLMProvider):
         except ImportError:
             raise ImportError("pip install together")
         
-        # Specialist models
-        self.sql_model = "defog/sqlcoder-7b-2"  # SQL specialist!
-        self.classifier_model = "mistralai/Mistral-7B-Instruct-v0.1"
-        self.code_review_model = "codellama/CodeLlama-34b-Instruct-hf"
+        # Use unified model if provided, else specialized, else defaults
+        self.sql_model = model or sql_model or "defog/sqlcoder-7b-2"
+        self.classifier_model = model or classifier_model or "mistralai/Mistral-7B-Instruct-v0.1"
+        self.code_review_model = model or code_review_model or "codellama/CodeLlama-34b-Instruct-hf"
     
     def _complete(self, model: str, prompt: str, temperature: float = 0) -> str:
         """Complete with Together."""

@@ -14,7 +14,7 @@ from functools import lru_cache
 import numpy as np
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================

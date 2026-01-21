@@ -41,7 +41,11 @@ class Kite:
     """
     
     def __init__(self, config: Optional[Dict] = None):
-        self.config = config or self._load_config()
+        # Always load environment defaults first
+        self.config = self._load_config()
+        # Merge with user-provided config if any
+        if config:
+            self.config.update(config)
         self.logger = logging.getLogger("Kite")
         
         self.advanced_rag = None
@@ -94,7 +98,6 @@ class Kite:
     def _load_config(self) -> Dict:
         from dotenv import load_dotenv
         load_dotenv() # Load standard .env
-        load_dotenv(".kite.env")
         return {
             'llm_provider': os.getenv('LLM_PROVIDER', 'ollama'),
             'llm_model': os.getenv('LLM_MODEL'),
@@ -120,9 +123,11 @@ class Kite:
         try:
             llm_provider = self.config.get('llm_provider')
             if llm_provider:
+                api_key = self.config.get(f'{llm_provider}_api_key')
                 self.llm = LLMFactory.create(
                     llm_provider,
                     self.config.get('llm_model'),
+                    api_key=api_key,
                     timeout=self.config.get('llm_timeout', 180.0)
                 )
             else:
@@ -269,7 +274,8 @@ class Kite:
                      llm_provider: str = None,
                      llm_model: str = None,
                      slm_provider: str = None,
-                     slm_model: str = None):
+                     slm_model: str = None,
+                     use_slm: bool = False):
         """
         Create custom agent with optional specific AI configuration.
         Overrides global .env settings for this specific agent.
@@ -299,7 +305,7 @@ class Kite:
             except Exception as e:
                 self.logger.warning(f"Failed to create specific SLM for {name}: {e}. Using default.")
                 
-        return Agent(name, system_prompt, agent_llm, tools or [], self, agent_slm)
+        return Agent(name, system_prompt, agent_llm, tools or [], self, agent_slm, use_slm=use_slm)
     
     def create_react_agent(self, 
                            name: str, 

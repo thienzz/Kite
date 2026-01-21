@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================
@@ -253,7 +253,7 @@ class GmailMCPServer:
         email = server.read_email("email001")
     """
     
-    def __init__(self, config: GmailConfig = None, credentials_path: str = ""):
+    def __init__(self, config: GmailConfig = None, credentials_path: str = "", **kwargs):
         self.config = config or GmailConfig()
         if credentials_path:
             self.config.credentials_path = credentials_path

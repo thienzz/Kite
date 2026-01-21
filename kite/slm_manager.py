@@ -17,6 +17,8 @@ class SLMSpecialists:
         try:
             # Extract SLM model settings
             slm_kwargs = {}
+            if 'slm_model' in self.config_dict:
+                slm_kwargs['model'] = self.config_dict['slm_model']
             if 'slm_sql_model' in self.config_dict:
                 slm_kwargs['sql_model'] = self.config_dict['slm_sql_model']
             if 'slm_classifier_model' in self.config_dict:

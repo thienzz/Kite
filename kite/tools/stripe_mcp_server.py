@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================
@@ -121,7 +121,11 @@ class StripeMCPServer:
     MCP Server for Stripe integration with safety defaults.
     """
     
-    def __init__(self, config: StripeConfig = None, client = None):
+    def __init__(self, config: StripeConfig = None, client = None, **kwargs):
+        # Handle api_key if passed directly
+        if 'api_key' in kwargs and config is None:
+            config = StripeConfig(api_key=kwargs['api_key'])
+        
         self.config = config or StripeConfig()
         self.stripe = client # Should be a real stripe client in production
         

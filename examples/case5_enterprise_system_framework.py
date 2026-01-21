@@ -189,9 +189,7 @@ Available MCP tools:
 - db_get_user: Get user subscription data
 
 Be professional and empathetic. Confirm all actions.""",
-        tools=[stripe_tool, slack_tool, db_tool],
-        slm_provider="ollama",
-        slm_model="llama3"
+        tools=[stripe_tool, slack_tool, db_tool]
     )
     
     # Technical Worker
@@ -206,9 +204,7 @@ Available MCP tools:
 - sentry_search: Find errors in logs
 
 Provide clear, actionable solutions.""",
-        tools=[db_tool, sentry_tool],
-        slm_provider="ollama",
-        slm_model="llama3"
+        tools=[db_tool, sentry_tool]
     )
     
     # Sales Worker
@@ -223,9 +219,7 @@ Available MCP tools:
 - pricing_api: Get plan details
 
 Be helpful, highlight value, not pushy.""",
-        tools=[db_tool, pricing_tool],
-        slm_provider="ollama",
-        slm_model="llama3"
+        tools=[db_tool, pricing_tool]
     )
     
     print("   [OK] Created 3 worker agents (SLM-powered)")

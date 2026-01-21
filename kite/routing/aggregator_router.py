@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 import json
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================
@@ -299,6 +299,7 @@ Respond as a single helpful assistant. Maintain the specific details provided by
         
         return {
             "query": query,
+            "route": subtasks[0].assigned_agent if len(subtasks) == 1 else "multi",
             "subtasks_count": len(subtasks),
             "agents_used": list(set(r.agent_name for r in responses)),
             "workers": list(set(r.agent_name for r in responses)),

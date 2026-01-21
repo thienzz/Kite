@@ -38,7 +38,7 @@ except ImportError:
 
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 @dataclass

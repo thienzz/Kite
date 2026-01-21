@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from kite import AgenticAI
 
 async def benchmark_groq():
-    load_dotenv(".kite.env")
+    load_dotenv()
     if not os.getenv("GROQ_API_KEY"):
         print("Please set GROQ_API_KEY in .env to run this benchmark.")
         return

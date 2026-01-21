@@ -138,49 +138,37 @@ async def main():
     billing_agent = ai.create_agent(
         name="BillingAgent",
         system_prompt="""You are a billing support specialist.
-
-Handle refunds, subscription cancellations, and payment issues.
-
-Available tools:
+ Handle refunds, subscription cancellations, and payment issues.
+ Available tools:
 - stripe_refund: Issue refunds
 - cancel_subscription: Cancel subscriptions
-
-Be professional, empathetic, and helpful. Always confirm actions.""",
+ Be professional, empathetic, and helpful. Always confirm actions.""",
         tools=[refund_tool, cancel_tool],
-        llm_provider="ollama",
-        llm_model="llama3"
+        use_slm=True
     )
     
     # Technical Agent
     tech_agent = ai.create_agent(
         name="TechnicalAgent",
         system_prompt="""You are a technical support specialist.
-
-Help with app crashes, bugs, and technical issues.
-
-Available tools:
+ Help with app crashes, bugs, and technical issues.
+ Available tools:
 - search_logs: Search error logs
-
-Provide clear, step-by-step solutions.""",
+ Provide clear, step-by-step solutions.""",
         tools=[logs_tool],
-        llm_provider="ollama",
-        llm_model="llama3"
+        use_slm=True
     )
     
     # Sales Agent
     sales_agent = ai.create_agent(
         name="SalesAgent",
         system_prompt="""You are a sales specialist.
-
-Help with plan upgrades, pricing, and feature questions.
-
-Available tools:
+ Help with plan upgrades, pricing, and feature questions.
+ Available tools:
 - get_pricing: Get pricing details
-
-Be helpful and highlight value, not pushy.""",
+ Be helpful and highlight value, not pushy.""",
         tools=[pricing_tool],
-        llm_provider="ollama",
-        llm_model="llama3"
+        use_slm=True
     )
     
     print("   [OK] Created 3 specialized agents")
@@ -189,39 +177,34 @@ Be helpful and highlight value, not pushy.""",
     print("     - SalesAgent (pricing, upgrades)")
     
     # ========================================================================
-    # STEP 3: Configure Semantic Router
+    # STEP 3: Configure Router (LLM Brain)
     # ========================================================================
-    print("\n  Configuring semantic router...")
+    print("\n  Configuring Aggregator Router (The Brain)...")
     
-    routes = {
-        "billing": [
-            "refund", "money back", "cancel", "subscription",
-            "payment", "charge", "billing", "invoice"
-        ],
-        "technical": [
-            "crash", "bug", "error", "not working", "broken",
-            "login", "connection", "timeout", "frozen"
-        ],
-        "sales": [
-            "upgrade", "pricing", "plan", "features",
-            "enterprise", "pro", "cost", "buy"
-        ]
-    }
+    # Define capabilities for the Brain to decide
+    ai.aggregator_router.register_agent(
+        "billing", 
+        billing_agent,
+        "Handle refunds, cancellations, and payment issues."
+    )
+    ai.aggregator_router.register_agent(
+        "technical", 
+        tech_agent,
+        "Handle app crashes, bugs, and technical support."
+    )
+    ai.aggregator_router.register_agent(
+        "sales", 
+        sales_agent,
+        "Handle pricing, plans, upgrades, and feature info."
+    )
     
-    for route_name, keywords in routes.items():
-        for keyword in keywords:
-            ai.semantic_router.add_route(route_name, keyword)
-    
-    print("   [OK] Configured 3 routes with keywords")
-    print(f"     - billing: {len(routes['billing'])} keywords")
-    print(f"     - technical: {len(routes['technical'])} keywords")
-    print(f"     - sales: {len(routes['sales'])} keywords")
+    print("   [OK] Configured 3 routes with LLM-based orchestration")
     
     # ========================================================================
     # STEP 4: Test Support System
     # ========================================================================
     print("\n" + "="*80)
-    print("TESTING CUSTOMER SUPPORT SYSTEM")
+    print("TESTING CUSTOMER SUPPORT SYSTEM (LLM BRAIN + SLM AGENTS)")
     print("="*80)
     
     test_cases = [
@@ -252,51 +235,32 @@ Be helpful and highlight value, not pushy.""",
     ]
     
     for i, test in enumerate(test_cases, 1):
-        print(f"\n{' '*80}")
-        print(f"TEST {i}/{len(test_cases)}")
-        print(f"{' '*80}")
+        print(f"\nTEST {i}/{len(test_cases)}")
         
         query = test['query']
         user_id = test['user_id']
         
         print(f"\n   Customer: {query}")
         
-        # Route query
-        route_result = ai.semantic_router.route(query)
-        route_name = route_result['route']
-        confidence = route_result.get('confidence', 0)
-        
-        print(f"   Routed to: {route_name} (confidence: {confidence:.2%})")
-        
-        # Execute appropriate agent
+        # Route and execute using AggregatorRouter (LLM Brain)
         start_time = time.time()
+        print("   [Brain] Decomposing and Orchestrating...")
         
-        context = {
-            'user_id': user_id,
-            'subscription': 'Pro',
-            'amount': test['amount']
-        }
-        
-        if route_name == "billing":
-            result = await billing_agent.run(query, context=context)
-        elif route_name == "technical":
-            result = await tech_agent.run(query, context=context)
-        elif route_name == "sales":
-            result = await sales_agent.run(query, context=context)
-        else:
-            result = {"success": False, "response": "Unknown route"}
+        # The router now handles decomposition, parallel execution, and merging
+        result = await ai.aggregator_router.route(query)
         
         elapsed = time.time() - start_time
         
-        print(f"\n   Agent: {result.get('agent', 'unknown')}")
-        print(f"   Response: {result.get('response', 'No response')[:150]}...")
+        print(f"\n   Agents Used: {', '.join(result.get('agents_used', []))}")
+        print(f"   Final Answer: {result.get('answer', 'No response')[:200]}...")
         print(f"   Time: {elapsed:.2f}s")
         
-        # Check if routed correctly
-        if route_name == test['expected']:
+        # Check if routed correctly (checking if expected agent was at least used)
+        agents_used = [a.lower() for a in result.get('agents_used', [])]
+        if test['expected'].lower() in agents_used:
             print(f"   [OK] Correct routing")
         else:
-            print(f"   [WARN]  Expected {test['expected']}, got {route_name}")
+            print(f"   [WARN] Expected '{test['expected']}' to be involved, but agents used were: {result.get('agents_used', [])}")
     
     # ========================================================================
     # STEP 5: Test Caching
@@ -312,7 +276,7 @@ Be helpful and highlight value, not pushy.""",
     # First run (cache miss)
     print("\n   Run 1 (cache miss):")
     start1 = time.time()
-    route1 = ai.semantic_router.route(test_query)
+    route1 = await ai.aggregator_router.route(test_query)
     time1 = time.time() - start1
     print(f"   Route: {route1['route']}")
     print(f"   Time: {time1*1000:.0f}ms")
@@ -320,7 +284,7 @@ Be helpful and highlight value, not pushy.""",
     # Second run (cache hit)
     print("\n   Run 2 (cache hit):")
     start2 = time.time()
-    route2 = ai.semantic_router.route(test_query)
+    route2 = await ai.aggregator_router.route(test_query)
     time2 = time.time() - start2
     print(f"   Route: {route2['route']}")
     print(f"   Time: {time2*1000:.0f}ms")
@@ -329,31 +293,17 @@ Be helpful and highlight value, not pushy.""",
     print(f"\n   [OK] Cache speedup: {speedup:.1f}x faster")
     
     # ========================================================================
-    # STEP 6: Framework Metrics
+    # STEP 6: AGENT METRICS
     # ========================================================================
     print("\n" + "="*80)
     print("AGENT METRICS")
     print("="*80)
     
-    print("\nBilling Agent:")
-    billing_metrics = billing_agent.get_metrics()
-    print(f"   Calls: {billing_metrics['calls']}")
-    print(f"   Success Rate: {billing_metrics['success_rate']:.1f}%")
-    
-    print("\nTechnical Agent:")
-    tech_metrics = tech_agent.get_metrics()
-    print(f"   Calls: {tech_metrics['calls']}")
-    print(f"   Success Rate: {tech_metrics['success_rate']:.1f}%")
-    
-    print("\nSales Agent:")
-    sales_metrics = sales_agent.get_metrics()
-    print(f"   Calls: {sales_metrics['calls']}")
-    print(f"   Success Rate: {sales_metrics['success_rate']:.1f}%")
-    
-    print("\nRouter Stats:")
-    router_stats = ai.semantic_router.get_stats()
-    print(f"   Total Routes: {router_stats.get('total_routes', 0)}")
-    print(f"   Cache Hit Rate: {router_stats.get('cache_hit_rate', 0):.1f}%")
+    for agent_name, agent in [("Billing", billing_agent), ("Technical", tech_agent), ("Sales", sales_agent)]:
+        print(f"\n{agent_name} Agent:")
+        metrics = agent.get_metrics()
+        print(f"   Calls: {metrics['calls']}")
+        print(f"   Success Rate: {metrics['success_rate']:.1f}%")
     
     print("\n" + "="*80)
     print("[OK] CASE STUDY 2 COMPLETE")

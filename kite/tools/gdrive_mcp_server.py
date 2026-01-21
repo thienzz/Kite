@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================
@@ -187,7 +187,7 @@ class GoogleDriveMCPServer:
         content = server.read_file("file1")
     """
     
-    def __init__(self, config: GDriveConfig = None, credentials_path: str = ""):
+    def __init__(self, config: GDriveConfig = None, credentials_path: str = "", **kwargs):
         self.config = config or GDriveConfig()
         if credentials_path:
             self.config.credentials_path = credentials_path

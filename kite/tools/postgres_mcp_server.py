@@ -16,7 +16,7 @@ import psycopg2
 from psycopg2 import sql
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 @dataclass
@@ -57,7 +57,7 @@ class PostgresMCPServer:
         result = await server.execute_query("SELECT * FROM users LIMIT 10")
     """
     
-    def __init__(self, config: MCPServerConfig = None, connection_string: str = None):
+    def __init__(self, config: MCPServerConfig = None, connection_string: str = None, **kwargs):
         self.config = config or MCPServerConfig()
         if connection_string:
             # Simple parsing for demo - in production use proper URL parser

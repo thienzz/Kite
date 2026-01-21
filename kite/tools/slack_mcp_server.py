@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================
@@ -199,7 +199,7 @@ class SlackMCPServer:
         messages = server.read_channel("C001", limit=5)
     """
     
-    def __init__(self, config: SlackConfig = None, bot_token: str = None):
+    def __init__(self, config: SlackConfig = None, bot_token: str = None, **kwargs):
         self.config = config or SlackConfig()
         if bot_token:
             self.config.bot_token = bot_token

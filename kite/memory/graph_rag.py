@@ -26,7 +26,7 @@ import networkx as nx
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv(".kite.env")
+load_dotenv()
 
 
 # ============================================================================

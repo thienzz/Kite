@@ -23,14 +23,8 @@ async def main():
     print("CASE STUDY 6: E-COMMERCE CUSTOMER SUPPORT (PARALLEL)")
     print("="*80)
 
-    # Configure framework to use llama3 for everything
-    # Use llama3 as default (since qwen2 is missing on this machine)
-    # You can override this with SLM_SQL_MODEL=qwen2 env variable
-    ai = Kite(config={
-        "slm_sql_model": os.getenv("SLM_SQL_MODEL", "llama3"),
-        "slm_classifier_model": os.getenv("SLM_CLASSIFIER_MODEL", "llama3"),
-        "slm_code_review_model": os.getenv("SLM_CODE_REVIEW_MODEL", "llama3")
-    })
+    # Initialize framework with global settings
+    ai = Kite()
     
     print("\n[OK] Building customer support system...")
     

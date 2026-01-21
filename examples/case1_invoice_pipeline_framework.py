@@ -69,7 +69,7 @@ def main():
     # ========================================================================
     print("\n[START] Initializing framework...")
     ai = Kite()
-    print("   [OK] Framework initialized")
+    print(f"   [OK] Framework initialized (Provider: {ai.llm.name})")
     
     # ========================================================================
     # STEP 1: Create Pipeline Workflow

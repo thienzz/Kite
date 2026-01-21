@@ -469,7 +469,8 @@ class GroqProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "llama3-70b-8192",
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None,
+                 **kwargs):
         self.model = model
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         self.logger = logging.getLogger("Groq")

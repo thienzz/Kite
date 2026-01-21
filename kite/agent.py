@@ -32,11 +32,13 @@ class Agent:
                  llm,
                  tools: List,
                  framework,
-                 slm = None):
+                 slm = None,
+                 use_slm: bool = False):
         self.name = name
         self.system_prompt = system_prompt
         self.llm = llm
         self.slm = slm
+        self.use_slm = use_slm
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
         
@@ -50,9 +52,12 @@ class Agent:
         
         # Log creation
         print(f"     Agent '{self.name}' initialized:")
-        print(f"      LLM: {self.metadata['llm']}")
-        if slm:
-            print(f"      SLM: {self.metadata['slm']}")
+        if self.use_slm:
+             print(f"      Engine: {self.metadata['slm']} (SLM-Only Mode)")
+        else:
+             print(f"      LLM: {self.metadata['llm']}")
+             if slm:
+                 print(f"      SLM: {self.metadata['slm']}")
     
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """
@@ -88,18 +93,28 @@ class Agent:
                     "content": f"Context: {context}"
                 })
             
-            # Get LLM response (Brain)
-            if hasattr(self.llm, 'chat_async'):
-                response = await self.llm.chat_async(messages)
+            # Determine which engine to use
+            engine = self.slm.provider if self.use_slm and self.slm else self.llm
+            engine_name = "SLM Specialist" if self.use_slm else "LLM Brain"
+            
+            # Get response
+            if hasattr(engine, 'chat_async'):
+                response = await engine.chat_async(messages)
+            elif hasattr(engine, 'complete_async'):
+                # For SLM providers that might only have complete
+                response = await engine.complete_async(system_prompt + "\n\nUser: " + user_input)
             else:
                 import asyncio
-                response = await asyncio.to_thread(self.llm.chat, messages)
+                # Fallback to sync chat or complete
+                if hasattr(engine, 'chat'):
+                    response = await asyncio.to_thread(engine.chat, messages)
+                else:
+                    response = await asyncio.to_thread(engine.complete, system_prompt + "\n\nUser: " + user_input)
             
-            print(f"      [DEBUG] [{self.name}] LLM Brain response: {response.strip()[:100]}...")
+            print(f"      [DEBUG] [{self.name}] {engine_name} response: {response.strip()[:100]}...")
             
             # Use SLM as "Hands" for low-level extraction (if available)
-            # This is 100x cheaper than using LLM for simple parsing
-            tool_calls = await self._extract_tool_calls(response)
+            tool_calls = await self._extract_tool_calls(response, context=context)
             
             if tool_calls:
                 # Execute tools
@@ -107,23 +122,35 @@ class Agent:
                 import asyncio
                 for tool_name, tool_args in tool_calls:
                     if tool_name in self.tools:
-                        # Tools might be sync and contain time.sleep or heavy computation
-                        # Execute in thread to avoid blocking the event loop
-                        result = await asyncio.to_thread(self.tools[tool_name].execute, **tool_args if isinstance(tool_args, dict) else tool_args)
-                        tool_results.append(result)
+                        try:
+                            # Tools might be sync and contain time.sleep or heavy computation
+                            # Execute in thread to avoid blocking the event loop
+                            result = await asyncio.to_thread(self.tools[tool_name].execute, **tool_args if isinstance(tool_args, dict) else tool_args)
+                            tool_results.append({"tool": tool_name, "result": result, "success": True})
+                        except Exception as tool_err:
+                            print(f"      [DEBUG] [{self.name}] Tool {tool_name} failed: {tool_err}")
+                            tool_results.append({"tool": tool_name, "error": str(tool_err), "success": False})
                 
-                # Get final response with tool results (Brain synthesizes findings)
+                # Get final response with tool results
                 messages.append({"role": "assistant", "content": response})
                 messages.append({
                     "role": "user",
                     "content": f"Tool results: {tool_results}"
                 })
                 
-                if hasattr(self.llm, 'chat_async'):
-                    response = await self.llm.chat_async(messages)
-                else:
-                    import asyncio
-                    response = await asyncio.to_thread(self.llm.chat, messages)
+                try:
+                    if hasattr(engine, 'chat_async'):
+                        response = await engine.chat_async(messages)
+                    elif hasattr(engine, 'chat'):
+                        response = await asyncio.to_thread(engine.chat, messages)
+                    else:
+                        # For simple SLM completion providers
+                        final_prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant: {response}\nTool results: {tool_results}\nSynthesize the final answer:"
+                        response = await asyncio.to_thread(engine.complete, final_prompt)
+                except Exception as synth_err:
+                    print(f"      [DEBUG] [{self.name}] Synthesis failed: {synth_err}")
+                    # Fallback to local response if synthesis fails (e.g. 429)
+                    response = f"I executed the tools but had issues summarizing: {tool_results}"
             
             self.success_count += 1
             
@@ -141,10 +168,10 @@ class Agent:
                 "agent": self.name
             }
     
-    async def _extract_tool_calls(self, response: str) -> List:
+    async def _extract_tool_calls(self, response: str, context: Optional[Dict] = None) -> List:
         """
         Extract tool calls from response using SLM as 'Hands' if available.
-        Provides detailed tool definitions for better extraction.
+        Provides detailed tool definitions and context for better extraction.
         """
         if not self.slm or not self.tools:
             return []
@@ -158,8 +185,10 @@ class Agent:
             tool_defs.append(tool.get_definition())
             
         prompt = f"""Extract tool calls from this text.
-Available tools with parameters:
+Available tools:
 {json.dumps(tool_defs, indent=2)}
+
+{f"Context (use for missing IDs/params): {json.dumps(context)}" if context else ""}
 
 Text: {response}
 
