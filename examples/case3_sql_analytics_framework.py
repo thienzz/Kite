@@ -223,14 +223,24 @@ def main():
         print(f"     {table}: {', '.join(cols)}")
     
     # ========================================================================
-    # STEP 1: Test SLM SQL Generation
+    # STEP 1: Test SQL Generation
     # ========================================================================
     print("\n" + "="*80)
-    print("TESTING SLM SQL GENERATOR")
+    print("TESTING SQL GENERATOR AGENT")
     print("="*80)
     
-    print("\n[AI] Using SLM specialist for SQL generation...")
-    print("   (50x cheaper & faster than GPT-4)")
+    # Create a specialized SQL agent
+    sql_agent = ai.create_agent(
+        name="SQLSpecialist",
+        system_prompt=f"""You are an expert SQL generator. 
+Given a schema and a natural language question, generate the best SQL query.
+Return ONLY the SQL query, nothing else. No markdown, no explanation.
+
+Schema:
+{schema}"""
+    )
+    
+    print("\n[AI] Using specialized agent for SQL generation...")
     
     test_queries = [
         "Show me the top 5 customers by lifetime value",
@@ -246,24 +256,26 @@ def main():
         
         print(f"\n   Question: {question}")
         
-        # Generate SQL with SLM
-        print("\n     Generating SQL with SLM...")
+        # Generate SQL with Agent
+        print("\n     Generating SQL with Agent...")
         start = time.time()
         
-        result = ai.slm.sql_generator.generate(
-            query=question,
-            schema=schema
-        )
-        
+        sql_response = asyncio.run(sql_agent.run(question))
+        sql = sql_response.get('response', '').strip()
+        # Clean up any potential markdown formatting
+        if sql.startswith('```sql'):
+            sql = sql.replace('```sql', '').replace('```', '').strip()
+        elif sql.startswith('```'):
+            sql = sql.replace('```', '').strip()
+            
         slm_time = time.time() - start
         
-        if not result['success']:
-            print(f"   [ERROR] Error: {result['error']}")
+        if not sql:
+            print(f"   [ERROR] Failed to generate SQL")
             continue
         
-        sql = result['sql']
         print(f"   SQL: {sql}")
-        print(f"   SLM Latency: {slm_time*1000:.0f}ms (vs ~2000ms GPT-4)")
+        print(f"   Latency: {slm_time*1000:.0f}ms")
         
         # Validate SQL safety
         print("\n     Validating SQL safety...")
@@ -341,15 +353,18 @@ def main():
     for question in complex_questions:
         print(f"\n   Question: {question}")
         
-        result = ai.slm.sql_generator.generate(
-            query=question,
-            schema=schema
-        )
-        
-        if result['success']:
-            print(f"   SQL: {result['sql']}")
+        sql_response = asyncio.run(sql_agent.run(question))
+        sql = sql_response.get('response', '').strip()
+        # Clean up any potential markdown formatting
+        if sql.startswith('```sql'):
+            sql = sql.replace('```sql', '').replace('```', '').strip()
+        elif sql.startswith('```'):
+            sql = sql.replace('```', '').strip()
             
-            exec_result = execute_sql_safely(db_path, result['sql'])
+        if sql:
+            print(f"   SQL: {sql}")
+            
+            exec_result = execute_sql_safely(db_path, sql)
             
             if exec_result['success']:
                 print(f"   [OK] {exec_result['row_count']} rows returned")

@@ -19,6 +19,8 @@ class PipelineStatus(Enum):
     """Generic pipeline processing status."""
     PENDING = "pending"
     PROCESSING = "processing"
+    AWAITING_APPROVAL = "awaiting_approval"
+    SUSPENDED = "suspended"
     COMPLETED = "completed"
     FAILED = "failed"
     ERROR = "error"
@@ -31,6 +33,8 @@ class PipelineState:
     data: Any = None
     results: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
+    current_step_index: int = 0
+    feedback: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     
@@ -58,6 +62,8 @@ class DeterministicPipeline:
     def __init__(self, name: str = "pipeline"):
         self.name = name
         self.steps: List[tuple[str, Callable]] = []
+        self.checkpoints: Dict[str, bool] = {}  # step_name -> approval_required
+        self.intervention_points: Dict[str, Callable] = {}  # step_name -> callback
         self.history: List[PipelineState] = []
         print(f"[OK] Pipeline '{self.name}' initialized")
     
@@ -65,6 +71,16 @@ class DeterministicPipeline:
         """Add a step to the pipeline."""
         self.steps.append((name, func))
         print(f"  [OK] Added step: {name}")
+
+    def add_checkpoint(self, step_name: str, approval_required: bool = True):
+        """Pause execution for approval after this step."""
+        self.checkpoints[step_name] = approval_required
+        print(f"  [OK] Added checkpoint after: {step_name}")
+
+    def add_intervention_point(self, step_name: str, callback: Callable):
+        """Call a callback for user intervention before this step."""
+        self.intervention_points[step_name] = callback
+        print(f"  [OK] Added intervention point before: {step_name}")
     
     def execute(self, data: Any, task_id: Optional[str] = None) -> PipelineState:
         """Execute all steps in the pipeline sequentially."""
@@ -73,55 +89,66 @@ class DeterministicPipeline:
         
         state = PipelineState(task_id=t_id, data=data)
         state.status = PipelineStatus.PROCESSING
+        self.history.append(state)
         
-        current_data = data
+        return self._run_sync(state)
+
+    def resume(self, task_id: str, feedback: Optional[str] = None) -> PipelineState:
+        """Resume a suspended or awaiting_approval task (sync)."""
+        state = next((s for s in self.history if s.task_id == task_id), None)
+        if not state:
+            raise ValueError(f"Task ID {task_id} not found in history")
+        
+        if state.status not in [PipelineStatus.SUSPENDED, PipelineStatus.AWAITING_APPROVAL]:
+            print(f"[WARNING] Task {task_id} is in status {state.status}, not suspended.")
+            return state
+
+        print(f"\n[RESUME] Resuming pipeline: {self.name} (Task: {task_id})")
+        state.status = PipelineStatus.PROCESSING
+        state.feedback = feedback
+        
+        return self._run_sync(state)
+
+    def _run_sync(self, state: PipelineState) -> PipelineState:
+        """Internal runner for sync execution."""
         try:
-            for step_name, func in self.steps:
+            while state.current_step_index < len(self.steps):
+                step_idx = state.current_step_index
+                step_name, func = self.steps[step_idx]
+                
+                # 1. Intervention Point
+                if step_name in self.intervention_points:
+                    print(f"     [INTERVENTION] Triggering before: {step_name}...")
+                    callback = self.intervention_points[step_name]
+                    import inspect
+                    if inspect.iscoroutinefunction(callback):
+                        raise RuntimeError(f"Intervention callback for '{step_name}' is async. Use execute_async().")
+                    callback(state)
+
+                # 2. Execute Step
                 print(f"     Executing step: {step_name}...")
-                # Support both sync and async if needed, but keeping it simple for now
+                current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
+                
                 import inspect
                 if inspect.iscoroutinefunction(func):
-                    # This requires the caller to be async, but for framework 
-                    # compatibility we might need a better way. 
-                    # For now, assuming sync or handled by caller.
                     raise RuntimeError(f"Step '{step_name}' is async. Use execute_async().")
                 
-                current_data = func(current_data)
-                state.results[step_name] = current_data
+                result = func(current_data)
+                state.results[step_name] = result
+                state.current_step_index += 1
                 state.updated_at = datetime.now()
-            
-            state.status = PipelineStatus.COMPLETED
-            print(f"[OK] Pipeline '{self.name}' completed successfully")
-            
-        except Exception as e:
-            state.status = PipelineStatus.ERROR
-            state.errors.append(str(e))
-            state.updated_at = datetime.now()
-            print(f"[ERROR] Pipeline '{self.name}' failed at step {step_name if 'step_name' in locals() else 'unknown'}: {e}")
-            
-        self.history.append(state)
-        return state
 
-    async def execute_async(self, data: Any, task_id: Optional[str] = None) -> PipelineState:
-        """Execute all steps in the pipeline asynchronously."""
-        t_id = task_id or f"TASK-{len(self.history)+1:04d}"
-        print(f"\n[START] Executing pipeline async: {self.name} (Task: {t_id})")
-        
-        state = PipelineState(task_id=t_id, data=data)
-        state.status = PipelineStatus.PROCESSING
-        
-        current_data = data
-        try:
-            for step_name, func in self.steps:
-                print(f"     Executing step (async): {step_name}...")
-                import inspect
-                if inspect.iscoroutinefunction(func):
-                    current_data = await func(current_data)
-                else:
-                    current_data = func(current_data)
-                
-                state.results[step_name] = current_data
-                state.updated_at = datetime.now()
+                # 3. Checkpoint
+                if step_name in self.checkpoints:
+                    approval_req = self.checkpoints[step_name]
+                    if approval_req:
+                        print(f"     [CHECKPOINT] Awaiting approval after: {step_name}")
+                        state.status = PipelineStatus.AWAITING_APPROVAL
+                        return state
+                    else:
+                        print(f"     [CHECKPOINT] Reached: {step_name} (No approval required)")
+                        state.status = PipelineStatus.SUSPENDED
+                        return state
             
             state.status = PipelineStatus.COMPLETED
             print(f"[OK] Pipeline '{self.name}' completed successfully")
@@ -132,8 +159,93 @@ class DeterministicPipeline:
             state.updated_at = datetime.now()
             print(f"[ERROR] Pipeline '{self.name}' failed: {e}")
             
-        self.history.append(state)
         return state
+
+    async def execute_async(self, data: Any, task_id: Optional[str] = None) -> PipelineState:
+        """Execute all steps in the pipeline asynchronously."""
+        t_id = task_id or f"TASK-{len(self.history)+1:04d}"
+        print(f"\n[START] Executing pipeline async: {self.name} (Task: {t_id})")
+        
+        state = PipelineState(task_id=t_id, data=data)
+        state.status = PipelineStatus.PROCESSING
+        self.history.append(state)
+        
+        return await self._run_async(state)
+
+    async def resume_async(self, task_id: str, feedback: Optional[str] = None) -> PipelineState:
+        """Resume a suspended or awaiting_approval task."""
+        state = next((s for s in self.history if s.task_id == task_id), None)
+        if not state:
+            raise ValueError(f"Task ID {task_id} not found in history")
+        
+        if state.status not in [PipelineStatus.SUSPENDED, PipelineStatus.AWAITING_APPROVAL]:
+            print(f"[WARNING] Task {task_id} is in status {state.status}, not suspended.")
+            return state
+
+        print(f"\n[RESUME] Resuming pipeline async: {self.name} (Task: {task_id})")
+        state.status = PipelineStatus.PROCESSING
+        state.feedback = feedback
+        
+        return await self._run_async(state)
+
+    async def _run_async(self, state: PipelineState) -> PipelineState:
+        """Internal runner for async execution."""
+        try:
+            while state.current_step_index < len(self.steps):
+                step_idx = state.current_step_index
+                step_name, func = self.steps[step_idx]
+                
+                # 1. Intervention Point (Before Step)
+                if step_name in self.intervention_points:
+                    print(f"     [INTERVENTION] Triggering before: {step_name}...")
+                    callback = self.intervention_points[step_name]
+                    # We pass the state and results for human to tweak
+                    await self._invoke_callback(callback, state)
+
+                # 2. Execute Step
+                print(f"     Executing step (async): {step_name}...")
+                import inspect
+                current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
+                
+                if inspect.iscoroutinefunction(func):
+                    result = await func(current_data)
+                else:
+                    result = func(current_data)
+                
+                state.results[step_name] = result
+                state.current_step_index += 1
+                state.updated_at = datetime.now()
+
+                # 3. Checkpoint (After Step)
+                if step_name in self.checkpoints:
+                    approval_req = self.checkpoints[step_name]
+                    if approval_req:
+                        print(f"     [CHECKPOINT] Awaiting approval after: {step_name}")
+                        state.status = PipelineStatus.AWAITING_APPROVAL
+                        return state
+                    else:
+                        print(f"     [CHECKPOINT] Reached: {step_name} (No approval required)")
+                        state.status = PipelineStatus.SUSPENDED
+                        return state
+            
+            state.status = PipelineStatus.COMPLETED
+            print(f"[OK] Pipeline '{self.name}' completed successfully")
+            
+        except Exception as e:
+            state.status = PipelineStatus.ERROR
+            state.errors.append(str(e))
+            state.updated_at = datetime.now()
+            print(f"[ERROR] Pipeline '{self.name}' failed: {e}")
+            
+        return state
+
+    async def _invoke_callback(self, callback: Callable, state: PipelineState):
+        """Invoke intervention callback."""
+        import inspect
+        if inspect.iscoroutinefunction(callback):
+            await callback(state)
+        else:
+            callback(state)
     
     def get_stats(self) -> Dict:
         """Get pipeline statistics."""

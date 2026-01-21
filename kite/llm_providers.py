@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 import os
 import logging
 import json
+import asyncio
 
 
 class BaseLLMProvider(ABC):
@@ -82,7 +83,8 @@ class OllamaProvider(BaseLLMProvider):
     def __init__(self, 
                  model: str = "llama3",
                  base_url: str = "http://localhost:11434",
-                 timeout: float = 180.0):
+                 timeout: float = 600.0,
+                 **kwargs):
         self.model = model
         self.base_url = base_url
         self.timeout = timeout
@@ -107,85 +109,183 @@ class OllamaProvider(BaseLLMProvider):
         except Exception as e:
             raise ConnectionError(f"Ollama not running at {self.base_url}: {e}")
     
+    def _sanitize_ollama_params(self, kwargs: Dict) -> Dict:
+        """Helper to ensure only valid Ollama parameters are sent."""
+        valid_top_level = {'model', 'prompt', 'messages', 'stream', 'format', 'options', 'keep_alive'}
+        # Common model options that should go into 'options' dict
+        valid_options = {
+            'num_keep', 'seed', 'num_predict', 'top_k', 'top_p', 'tfs_z', 
+            'typical_p', 'repeat_last_n', 'temperature', 'repeat_penalty', 
+            'presence_penalty', 'frequency_penalty', 'mixtral_mi', 'mixtral_m', 
+            'mixtral_s', 'num_ctx', 'num_batch', 'num_gqa', 'num_gpu', 
+            'main_gpu', 'low_vram', 'f16_kv', 'logits_all', 'vocab_only', 
+            'use_mmap', 'use_mlock', 'num_thread'
+        }
+        
+        sanitized = {}
+        options = kwargs.get('options', {})
+        
+        for k, v in kwargs.items():
+            if k in valid_top_level:
+                sanitized[k] = v
+            elif k in valid_options:
+                options[k] = v
+                
+        if options:
+            sanitized['options'] = options
+        return sanitized
+
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate completion (sync)."""
         import httpx
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    **kwargs
-                }
-            )
-            data = response.json()
-            if "response" in data:
-                return data["response"]
-            elif "message" in data and "content" in data["message"]:
-                return data["message"]["content"]
-            raise KeyError(f"Unexpected Ollama response format: {data}")
+        import threading
+        
+        params = self._sanitize_ollama_params({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            **kwargs
+        })
+        
+        # Simple heartbeat thread
+        stop_heartbeat = threading.Event()
+        def heartbeat():
+            start = time.time()
+            while not stop_heartbeat.wait(30):
+                self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
+        
+        h_thread = threading.Thread(target=heartbeat, daemon=True)
+        h_thread.start()
+        
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.base_url}/api/generate",
+                    json=params
+                )
+                data = response.json()
+                if "response" in data:
+                    return data["response"]
+                elif "message" in data and "content" in data["message"]:
+                    return data["message"]["content"]
+                raise KeyError(f"Unexpected Ollama response format: {data}")
+        finally:
+            stop_heartbeat.set()
 
     async def complete_async(self, prompt: str, **kwargs) -> str:
         """Native async complete."""
         import httpx
+        
+        params = self._sanitize_ollama_params({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            **kwargs
+        })
+        
+        # Async heartbeat
+        async def heartbeat(task):
+            start = time.time()
+            while not task.done():
+                await asyncio.sleep(30)
+                if not task.done():
+                    self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
+            request_task = asyncio.create_task(client.post(
                 f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    **kwargs
-                }
-            )
-            data = response.json()
-            if "response" in data:
-                return data["response"]
-            elif "message" in data and "content" in data["message"]:
-                return data["message"]["content"]
-            raise KeyError(f"Unexpected Ollama response format: {data}")
+                json=params
+            ))
+            heartbeat_task = asyncio.create_task(heartbeat(request_task))
+            
+            try:
+                response = await request_task
+                data = response.json()
+                if "response" in data:
+                    return data["response"]
+                elif "message" in data and "content" in data["message"]:
+                    return data["message"]["content"]
+                raise KeyError(f"Unexpected Ollama response format: {data}")
+            finally:
+                heartbeat_task.cancel()
     
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion (sync)."""
         import httpx
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    **kwargs
-                }
-            )
-            data = response.json()
-            if "message" in data and "content" in data["message"]:
-                return data["message"]["content"]
-            elif "response" in data:
-                return data["response"]
-            raise KeyError(f"Unexpected Ollama chat response format: {data}")
+        import threading
+        
+        params = self._sanitize_ollama_params({
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            **kwargs
+        })
+        
+        stop_heartbeat = threading.Event()
+        def heartbeat():
+            start = time.time()
+            while not stop_heartbeat.wait(30):
+                self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
+        
+        h_thread = threading.Thread(target=heartbeat, daemon=True)
+        h_thread.start()
+        
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.base_url}/api/chat",
+                    json=params
+                )
+                if response.status_code != 200:
+                    self.logger.error(f"Ollama Chat Error {response.status_code}: {response.text}")
+                
+                data = response.json()
+                if "message" in data and "content" in data["message"]:
+                    return data["message"]["content"]
+                elif "response" in data:
+                    return data["response"]
+                raise KeyError(f"Unexpected Ollama chat response format: {data}")
+        finally:
+            stop_heartbeat.set()
 
     async def chat_async(self, messages: List[Dict], **kwargs) -> str:
         """Native async chat."""
         import httpx
+        
+        params = self._sanitize_ollama_params({
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            **kwargs
+        })
+        
+        async def heartbeat(task):
+            start = time.time()
+            while not task.done():
+                await asyncio.sleep(30)
+                if not task.done():
+                    self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
+            request_task = asyncio.create_task(client.post(
                 f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    **kwargs
-                }
-            )
-            data = response.json()
-            if "message" in data and "content" in data["message"]:
-                return data["message"]["content"]
-            elif "response" in data:
-                return data["response"]
-            raise KeyError(f"Unexpected Ollama chat response format: {data}")
+                json=params
+            ))
+            heartbeat_task = asyncio.create_task(heartbeat(request_task))
+            
+            try:
+                response = await request_task
+                if response.status_code != 200:
+                    self.logger.error(f"Ollama Chat Async Error {response.status_code}: {response.text}")
+                    
+                data = response.json()
+                if "message" in data and "content" in data["message"]:
+                    return data["message"]["content"]
+                elif "response" in data:
+                    return data["response"]
+                raise KeyError(f"Unexpected Ollama chat response format: {data}")
+            finally:
+                heartbeat_task.cancel()
     
     def embed(self, text: str) -> List[float]:
         """Generate embeddings."""
@@ -251,7 +351,8 @@ class LMStudioProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "local-model",
-                 base_url: str = "http://localhost:1234/v1"):
+                 base_url: str = "http://localhost:1234/v1",
+                 **kwargs):
         self.model = model
         self.base_url = base_url
         self.logger = logging.getLogger("LMStudio")
@@ -344,7 +445,8 @@ class VLLMProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "meta-llama/Llama-2-7b-hf",
-                 base_url: str = "http://localhost:8000"):
+                 base_url: str = "http://localhost:8000",
+                 **kwargs):
         self.model = model
         self.base_url = base_url
         self.logger = logging.getLogger("vLLM")
@@ -543,7 +645,8 @@ class TogetherProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None,
+                 **kwargs):
         self.model = model
         self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
         self.logger = logging.getLogger("Together")
@@ -619,7 +722,8 @@ class AnthropicProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "claude-3-sonnet-20240229",
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None,
+                 **kwargs):
         self.model = model
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         
@@ -671,7 +775,8 @@ class OpenAIProvider(BaseLLMProvider):
     
     def __init__(self, 
                  model: str = "gpt-4-turbo-preview",
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None,
+                 **kwargs):
         self.model = model
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         

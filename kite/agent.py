@@ -31,14 +31,10 @@ class Agent:
                  system_prompt: str,
                  llm,
                  tools: List,
-                 framework,
-                 slm = None,
-                 use_slm: bool = False):
+                 framework):
         self.name = name
         self.system_prompt = system_prompt
         self.llm = llm
-        self.slm = slm
-        self.use_slm = use_slm
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
         
@@ -46,18 +42,11 @@ class Agent:
         self.call_count = 0
         self.success_count = 0
         self.metadata = {
-            "llm": getattr(llm, 'name', 'unknown'),
-            "slm": getattr(slm.provider if hasattr(slm, 'provider') else slm, 'name', 'none') if slm else 'none'
+            "llm": getattr(llm, 'name', 'unknown')
         }
         
         # Log creation
-        print(f"     Agent '{self.name}' initialized:")
-        if self.use_slm:
-             print(f"      Engine: {self.metadata['slm']} (SLM-Only Mode)")
-        else:
-             print(f"      LLM: {self.metadata['llm']}")
-             if slm:
-                 print(f"      SLM: {self.metadata['slm']}")
+        print(f"     Agent '{self.name}' initialized (LLM: {self.metadata['llm']})")
     
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """
@@ -74,44 +63,35 @@ class Agent:
         
         try:
             # Build messages
-            system_prompt = self.system_prompt
+            full_system_prompt = self.system_prompt
+            if context:
+                full_system_prompt += f"\n\nContext: {context}"
+            
             if self.tools:
                 tool_info = "\n\nCRITICAL: You MUST use the following tools to fulfill the user request. State clearly which tool you are using and with what parameters. Do NOT apologize for not having data if a tool is available.\nAvailable Tools:\n"
                 for tool in self.tools.values():
                     tool_info += f"- {tool.name}: {tool.description}\n"
-                system_prompt += tool_info
+                full_system_prompt += tool_info
                 
             messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": full_system_prompt},
                 {"role": "user", "content": user_input}
             ]
             
-            # Add context if provided
-            if context:
-                messages.insert(1, {
-                    "role": "system",
-                    "content": f"Context: {context}"
-                })
-            
-            # Determine which engine to use
-            engine = self.slm.provider if self.use_slm and self.slm else self.llm
-            engine_name = "SLM Specialist" if self.use_slm else "LLM Brain"
-            
             # Get response
-            if hasattr(engine, 'chat_async'):
-                response = await engine.chat_async(messages)
-            elif hasattr(engine, 'complete_async'):
-                # For SLM providers that might only have complete
-                response = await engine.complete_async(system_prompt + "\n\nUser: " + user_input)
+            if hasattr(self.llm, 'chat_async'):
+                response = await self.llm.chat_async(messages)
+            elif hasattr(self.llm, 'complete_async'):
+                response = await self.llm.complete_async(system_prompt + "\n\nUser: " + user_input)
             else:
                 import asyncio
                 # Fallback to sync chat or complete
-                if hasattr(engine, 'chat'):
-                    response = await asyncio.to_thread(engine.chat, messages)
+                if hasattr(self.llm, 'chat'):
+                    response = await asyncio.to_thread(self.llm.chat, messages)
                 else:
-                    response = await asyncio.to_thread(engine.complete, system_prompt + "\n\nUser: " + user_input)
+                    response = await asyncio.to_thread(self.llm.complete, system_prompt + "\n\nUser: " + user_input)
             
-            print(f"      [DEBUG] [{self.name}] {engine_name} response: {response.strip()[:100]}...")
+            print(f"      [DEBUG] [{self.name}] Response: {response.strip()[:100]}...")
             
             # Use SLM as "Hands" for low-level extraction (if available)
             tool_calls = await self._extract_tool_calls(response, context=context)
@@ -139,14 +119,14 @@ class Agent:
                 })
                 
                 try:
-                    if hasattr(engine, 'chat_async'):
-                        response = await engine.chat_async(messages)
-                    elif hasattr(engine, 'chat'):
-                        response = await asyncio.to_thread(engine.chat, messages)
+                    if hasattr(self.llm, 'chat_async'):
+                        response = await self.llm.chat_async(messages)
+                    elif hasattr(self.llm, 'chat'):
+                        response = await asyncio.to_thread(self.llm.chat, messages)
                     else:
-                        # For simple SLM completion providers
+                        # For simple completion providers
                         final_prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant: {response}\nTool results: {tool_results}\nSynthesize the final answer:"
-                        response = await asyncio.to_thread(engine.complete, final_prompt)
+                        response = await asyncio.to_thread(self.llm.complete, final_prompt)
                 except Exception as synth_err:
                     print(f"      [DEBUG] [{self.name}] Synthesis failed: {synth_err}")
                     # Fallback to local response if synthesis fails (e.g. 429)
@@ -157,8 +137,7 @@ class Agent:
             return {
                 "success": True,
                 "response": response,
-                "agent": self.name,
-                "hybrid": self.slm is not None
+                "agent": self.name
             }
             
         except Exception as e:
@@ -170,10 +149,10 @@ class Agent:
     
     async def _extract_tool_calls(self, response: str, context: Optional[Dict] = None) -> List:
         """
-        Extract tool calls from response using SLM as 'Hands' if available.
+        Extract tool calls from response.
         Provides detailed tool definitions and context for better extraction.
         """
-        if not self.slm or not self.tools:
+        if not self.tools:
             return []
             
         import json
@@ -196,13 +175,13 @@ Output ONLY a JSON list of calls like: [{{"name": "tool_name", "args": {{"arg": 
 If no tools needed, return []."""
 
         try:
-            # Use SLM provider's complete method
-            if hasattr(self.slm.provider, 'complete_async'):
-                raw_extraction = await self.slm.provider.complete_async(prompt)
+            # Use current LLM for extraction
+            if hasattr(self.llm, 'complete_async'):
+                raw_extraction = await self.llm.complete_async(prompt)
             else:
-                raw_extraction = await asyncio.to_thread(self.slm.provider.complete, prompt)
+                raw_extraction = await asyncio.to_thread(self.llm.complete, prompt)
             
-            print(f"      [DEBUG] Raw SLM extraction: {raw_extraction.strip()[:100]}...")
+            print(f"      [DEBUG] Raw tool extraction: {raw_extraction.strip()[:100]}...")
             
             # Clean JSON
             json_text = raw_extraction.strip()

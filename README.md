@@ -7,11 +7,11 @@ Kite is a production-ready, modular framework designed for building robust AI ag
 ## ✨ Key Features
 
 - **🚀 Multi-Engine Support**: Native integration with OpenAI, Anthropic, Groq, Together AI, and local models via Ollama.
-- **⚡ SLM Optimization**: Specialized support for "Small Language Models" (SLMs) to handle high-frequency, low-latency tasks.
-- **🧠 Advanced Memory**: Structured **Semantic Memory** (Vector DB) and **Short-term Memory** for context-aware agents.
+- **🚀 Multi-Engine Support**: Native integration with OpenAI, Anthropic, Groq, Together AI, and local models via Ollama.
+- **🧠 Advanced Memory**: Structured **Semantic Memory** (Vector DB), **GraphRAG**, and **Session Memory**.
 - **🛡️ Production Safety**: Built-in **Circuit Breakers**, **Idempotency Managers**, and **Self-Healing** validation.
+- **⚡ Lazy Loading**: Core components initialize only when needed, ensuring minimal startup overhead.
 - **📈 Observability**: Real-time monitoring and metrics for agent performance, cost, and success rates.
-- **🔄 Deterministic Pipelines**: Orchestrate complex workflows with state management and error handling.
 
 ---
 
@@ -31,10 +31,10 @@ pip install -r requirements.txt
 ### Basic Usage
 
 ```python
-from kite import AgenticAI
+from kite import Kite
 
 # 1. Initialize Framework
-ai = AgenticAI()
+ai = Kite()
 
 # 2. Extract structured data with built-in safety
 text = "Invoice #INV-001 from Acme Corp for $1,250.00"

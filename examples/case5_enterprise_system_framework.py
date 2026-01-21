@@ -179,7 +179,7 @@ async def main():
     # Billing Worker
     billing_worker = ai.create_agent(
         name="BillingWorker",
-        system_prompt="""You are a billing specialist (SLM-powered).
+        system_prompt="""You are a billing specialist.
 
 Handle refunds, cancellations, payment issues efficiently.
 
@@ -195,7 +195,7 @@ Be professional and empathetic. Confirm all actions.""",
     # Technical Worker
     tech_worker = ai.create_agent(
         name="TechnicalWorker",
-        system_prompt="""You are a technical support specialist (SLM-powered).
+        system_prompt="""You are a technical support specialist.
 
 Diagnose and fix technical issues quickly.
 
@@ -210,7 +210,7 @@ Provide clear, actionable solutions.""",
     # Sales Worker
     sales_worker = ai.create_agent(
         name="SalesWorker",
-        system_prompt="""You are a sales specialist (SLM-powered).
+        system_prompt="""You are a sales specialist.
 
 Help with upgrades, pricing, and feature questions.
 
@@ -222,10 +222,10 @@ Be helpful, highlight value, not pushy.""",
         tools=[db_tool, pricing_tool]
     )
     
-    print("   [OK] Created 3 worker agents (SLM-powered)")
-    print("     - BillingWorker (cost: $0.01/request)")
-    print("     - TechnicalWorker (cost: $0.01/request)")
-    print("     - SalesWorker (cost: $0.01/request)")
+    print("   [OK] Created 3 specialized worker agents")
+    print("     - BillingWorker (payment experts)")
+    print("     - TechnicalWorker (system experts)")
+    print("     - SalesWorker (product experts)")
     
     # ========================================================================
     # STEP 3: Configure Supervisor Router

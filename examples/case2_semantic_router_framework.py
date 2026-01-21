@@ -143,8 +143,7 @@ async def main():
 - stripe_refund: Issue refunds
 - cancel_subscription: Cancel subscriptions
  Be professional, empathetic, and helpful. Always confirm actions.""",
-        tools=[refund_tool, cancel_tool],
-        use_slm=True
+        tools=[refund_tool, cancel_tool]
     )
     
     # Technical Agent
@@ -155,8 +154,7 @@ async def main():
  Available tools:
 - search_logs: Search error logs
  Provide clear, step-by-step solutions.""",
-        tools=[logs_tool],
-        use_slm=True
+        tools=[logs_tool]
     )
     
     # Sales Agent
@@ -167,8 +165,7 @@ async def main():
  Available tools:
 - get_pricing: Get pricing details
  Be helpful and highlight value, not pushy.""",
-        tools=[pricing_tool],
-        use_slm=True
+        tools=[pricing_tool]
     )
     
     print("   [OK] Created 3 specialized agents")

@@ -48,20 +48,26 @@ class Kite:
             self.config.update(config)
         self.logger = logging.getLogger("Kite")
         
-        self.advanced_rag = None
-        self.db_mcp = None
+        # Lazy storage
+        self._llm = None
+        self._embeddings = None
+        self._vector_memory = None
+        self._session_memory = None
+        self._graph_rag = None
+        self._semantic_router = None
+        self._aggregator_router = None
+        self._tools = None
+        self._pipeline = None
+        self._advanced_rag = None
+        self._cache = None
+        self._db_mcp = None
+        
         self.data_loader = DocumentLoader()
         
-        self._init_providers()
+        # Only initialize core safety eagerly
         self._init_safety()
-        self._init_memory()
-        self._init_routing()
-        self._init_tools()
-        self._init_slm()
-        self._init_pipeline()
-        self._init_advanced()
         
-        self.logger.info("[OK] Kite (general-purpose) initialized")
+        self.logger.info("[OK] Kite initialized (lazy-loading enabled)")
     
     def load_document(self, path: str, doc_id: Optional[str] = None):
         """Load and store document(s) using DocumentLoader."""
@@ -112,46 +118,131 @@ class Kite:
             'vector_backend': os.getenv('VECTOR_BACKEND', 'memory'), # Default to memory if not set
             'circuit_breaker_threshold': int(os.getenv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', 3)),
             'circuit_breaker_timeout': int(os.getenv('CIRCUIT_BREAKER_TIMEOUT_SECONDS', 60)),
-            'llm_timeout': float(os.getenv('LLM_TIMEOUT', 180.0)),
+            'llm_timeout': float(os.getenv('LLM_TIMEOUT', 600.0)),
         }
     
-    def _init_providers(self):
-        from .llm_providers import LLMFactory
-        from .embedding_providers import EmbeddingFactory
-        
-        # Initialize LLM
-        try:
-            llm_provider = self.config.get('llm_provider')
-            if llm_provider:
-                api_key = self.config.get(f'{llm_provider}_api_key')
-                self.llm = LLMFactory.create(
-                    llm_provider,
-                    self.config.get('llm_model'),
-                    api_key=api_key,
-                    timeout=self.config.get('llm_timeout', 180.0)
-                )
-            else:
-                self.llm = LLMFactory.auto_detect()
-        except Exception as e:
-            self.logger.warning(f"    LLM Provider {self.config.get('llm_provider')}: {e}")
-            self.llm = LLMFactory.auto_detect()
-            
-        # Initialize Embeddings
-        try:
-            emb_provider = self.config.get('embedding_provider')
-            if emb_provider:
-                self.embeddings = EmbeddingFactory.create(
-                    emb_provider,
-                    self.config.get('embedding_model')
-                )
-            else:
-                self.embeddings = EmbeddingFactory.auto_detect()
-        except Exception as e:
-            self.logger.warning(f"    Embedding Provider {self.config.get('embedding_provider')}: {e}")
-            self.embeddings = EmbeddingFactory.auto_detect()
-            
-        self.logger.info(f"  [OK] LLM: {self.llm.name if self.llm else 'None'}")
-        self.logger.info(f"  [OK] Embeddings: {self.embeddings.name if self.embeddings else 'None'}")
+    @property
+    def llm(self):
+        if self._llm is None:
+            from .llm_providers import LLMFactory
+            try:
+                llm_provider = self.config.get('llm_provider')
+                if llm_provider:
+                    api_key = self.config.get(f'{llm_provider}_api_key') or os.getenv(f'{llm_provider.upper()}_API_KEY')
+                    self._llm = LLMFactory.create(
+                        llm_provider,
+                        self.config.get('llm_model'),
+                        api_key=api_key,
+                        timeout=self.config.get('llm_timeout', 180.0)
+                    )
+                else:
+                    self._llm = LLMFactory.auto_detect()
+            except Exception as e:
+                self.logger.warning(f"    LLM initialization failed: {e}")
+                self._llm = LLMFactory.auto_detect()
+        return self._llm
+
+    @property
+    def embeddings(self):
+        if self._embeddings is None:
+            from .embedding_providers import EmbeddingFactory
+            try:
+                emb_provider = self.config.get('embedding_provider')
+                if emb_provider:
+                    self._embeddings = EmbeddingFactory.create(
+                        emb_provider,
+                        self.config.get('embedding_model')
+                    )
+                else:
+                    self._embeddings = EmbeddingFactory.auto_detect()
+            except Exception as e:
+                self.logger.warning(f"    Embedding initialization failed: {e}")
+                self._embeddings = EmbeddingFactory.auto_detect()
+        return self._embeddings
+
+    @property
+    def vector_memory(self):
+        if self._vector_memory is None:
+            from .memory.vector_memory import VectorMemory
+            backend = self.config.get('vector_backend', 'memory')
+            self._vector_memory = VectorMemory(
+                backend=backend,
+                embedding_provider=self.embeddings
+            )
+            self.logger.info(f"  [OK] Vector Memory initialized (Backend: {backend})")
+        return self._vector_memory
+
+    @property
+    def session_memory(self):
+        if self._session_memory is None:
+            from .memory.session_memory import SessionMemory
+            self._session_memory = SessionMemory()
+        return self._session_memory
+
+    @property
+    def graph_rag(self):
+        if self._graph_rag is None:
+            from .memory.graph_rag import GraphRAG
+            self._graph_rag = GraphRAG(llm=self.llm)
+        return self._graph_rag
+
+    @property
+    def semantic_router(self):
+        if self._semantic_router is None:
+            from .routing import SemanticRouter
+            self._semantic_router = SemanticRouter(
+                confidence_threshold=0.4,
+                embedding_provider=self.embeddings
+            )
+        return self._semantic_router
+
+    @property
+    def aggregator_router(self):
+        if self._aggregator_router is None:
+            from .routing import AggregatorRouter
+            self._aggregator_router = AggregatorRouter(llm=self.llm)
+        return self._aggregator_router
+
+    @property
+    def tools(self):
+        if self._tools is None:
+            from .tool_registry import ToolRegistry
+            from .tools.contrib import web_search, calculator, get_current_datetime
+            self._tools = ToolRegistry(self.config, self.logger)
+            # Register standard contrib tools
+            self.create_tool("web_search", web_search, "Search the web for information")
+            self.create_tool("calculator", calculator, "Evaluate mathematical expressions")
+            self.create_tool("get_datetime", get_current_datetime, "Get current date and time")
+        return self._tools
+
+    @property
+    def pipeline(self):
+        if self._pipeline is None:
+            from .pipeline_manager import PipelineManager
+            from .pipeline import DeterministicPipeline
+            self._pipeline = PipelineManager(DeterministicPipeline, self.logger)
+        return self._pipeline
+
+    @property
+    def advanced_rag(self):
+        if self._advanced_rag is None:
+            from .memory.advanced_rag import AdvancedRAG
+            self._advanced_rag = AdvancedRAG(self.vector_memory, self.llm)
+        return self._advanced_rag
+
+    @property
+    def cache(self):
+        if self._cache is None:
+            from .caching.cache_manager import CacheManager
+            self._cache = CacheManager(self.vector_memory)
+        return self._cache
+
+    @property
+    def db_mcp(self):
+        if self._db_mcp is None:
+            from .tools.mcp.database_mcp import DatabaseMCP
+            self._db_mcp = DatabaseMCP()
+        return self._db_mcp
     
     def _init_safety(self):
         """Initialize safety patterns."""
@@ -171,81 +262,6 @@ class Kite:
         
         self.logger.info("  [OK] Safety")
     
-    def _init_memory(self):
-        """Initialize memory systems."""
-        from .memory.vector_memory import VectorMemory
-        from .memory.session_memory import SessionMemory
-        from .memory.graph_rag import GraphRAG # Added this import to maintain GraphRAG functionality
-        
-        backend = self.config.get('vector_backend', 'chroma')
-        self.vector_memory = VectorMemory(
-            backend=backend,
-            embedding_provider=self.embeddings
-        )
-        self.session_memory = SessionMemory()
-        self.logger.info(f"  [OK] Memory (Backend: {backend})")
-        self.graph_rag = GraphRAG(llm=self.llm)
-        
-        self.logger.info("  [OK] Memory")
-    
-    def _init_routing(self):
-        """Initialize routing systems."""
-        from .routing import SemanticRouter, AggregatorRouter
-        
-        self.semantic_router = SemanticRouter(
-            confidence_threshold=0.4,
-            embedding_provider=self.embeddings
-        )
-        self.aggregator_router = AggregatorRouter(llm=self.llm)
-        
-        self.logger.info("  [OK] Routing")
-    
-    def _init_tools(self):
-        """Initialize tool registry."""
-        from .tool_registry import ToolRegistry
-        from .tools.contrib import web_search, calculator, get_current_datetime
-        
-        self.tools = ToolRegistry(self.config, self.logger)
-        
-        # Register standard contrib tools
-        self.create_tool("web_search", web_search, "Search the web for information")
-        self.create_tool("calculator", calculator, "Evaluate mathematical expressions")
-        self.create_tool("get_datetime", get_current_datetime, "Get current date and time")
-        
-        self.logger.info("  [OK] Tools (including contrib)")
-    
-    def _init_slm(self):
-        """Initialize SLM specialists."""
-        from .slm_manager import SLMSpecialists
-        self.slm = SLMSpecialists(self.config, self.logger)
-        self.logger.info("  [OK] SLM")
-    
-    def _init_pipeline(self):
-        """Initialize workflow system."""
-        from .pipeline_manager import PipelineManager
-        from .pipeline import DeterministicPipeline
-        
-        self.pipeline = PipelineManager(DeterministicPipeline, self.logger)
-        self.logger.info("  [OK] Pipeline")
-
-    def _init_advanced(self):
-        """Initialize advanced features."""
-        from .memory.advanced_rag import AdvancedRAG
-        from .caching.cache_manager import CacheManager
-        from .tools.mcp.database_mcp import DatabaseMCP
-        from .utils.cluster import ClusterNode
-        from .data_loaders import DocumentLoader # Added this import
-        
-        self.advanced_rag = AdvancedRAG(self.vector_memory, self.llm)
-        self.cache = CacheManager(self.vector_memory)
-        self.db_mcp = DatabaseMCP() # Changed self.mcp_db to self.db_mcp
-        
-        # Distributed Cluster Support
-        if self.config.get('cluster_enabled', False):
-            self.cluster = ClusterNode()
-            self.cluster.join_cluster()
-        
-        self.logger.info("  [OK] Advanced Features (RAG, Cache, MCP, Cluster)")
     
     # ==========================================================================
     # GENERAL-PURPOSE METHODS
@@ -273,16 +289,17 @@ class Kite:
                      tools: List = None,
                      llm_provider: str = None,
                      llm_model: str = None,
-                     slm_provider: str = None,
-                     slm_model: str = None,
-                     use_slm: bool = False):
+                     agent_type: str = "base"):
         """
         Create custom agent with optional specific AI configuration.
-        Overrides global .env settings for this specific agent.
+        Supported types: 'base', 'react', 'plan_execute', 'rewoo', 'tot'
         """
         from .agent import Agent
+        from .agents.react_agent import ReActAgent
+        from .agents.plan_execute import PlanExecuteAgent
+        from .agents.rewoo import ReWOOAgent
+        from .agents.tot import TreeOfThoughtsAgent
         from .llm_providers import LLMFactory
-        from .slm_manager import SLMSpecialists
         
         # Determine LLM
         agent_llm = self.llm
@@ -292,20 +309,18 @@ class Kite:
             except Exception as e:
                 self.logger.warning(f"Failed to create specific LLM for {name}: {e}. Using default.")
         
-        # Determine SLM
-        agent_slm = self.slm
-        if slm_provider:
-            try:
-                # Merge current config with overrides
-                agent_config = self.config.copy() if hasattr(self.config, 'copy') else {}
-                agent_config['slm_provider'] = slm_provider
-                if slm_model:
-                    agent_config['slm_model'] = slm_model
-                agent_slm = SLMSpecialists(agent_config, self.logger)
-            except Exception as e:
-                self.logger.warning(f"Failed to create specific SLM for {name}: {e}. Using default.")
-                
-        return Agent(name, system_prompt, agent_llm, tools or [], self, agent_slm, use_slm=use_slm)
+        tools_list = tools or []
+        
+        if agent_type == "react":
+            return ReActAgent(name, system_prompt, agent_llm, tools_list, self)
+        elif agent_type == "plan_execute":
+            return PlanExecuteAgent(name, system_prompt, agent_llm, tools_list, self)
+        elif agent_type == "rewoo":
+            return ReWOOAgent(name, system_prompt, agent_llm, tools_list, self)
+        elif agent_type == "tot":
+            return TreeOfThoughtsAgent(name, system_prompt, agent_llm, tools_list, self)
+            
+        return Agent(name, system_prompt, agent_llm, tools_list, self)
     
     def create_react_agent(self, 
                            name: str, 
@@ -332,9 +347,99 @@ class Kite:
             llm=base_agent.llm,
             tools=list(base_agent.tools.values()),
             framework=self,
-            slm=base_agent.slm,
             kill_switch=ks
         )
+    
+    def create_plan_execute_agent(self, 
+                                  name: str = "PlanExecuteAgent", 
+                                  system_prompt: str = "You are a master planner. Decompose the following goal into a sequence of actionable steps.", 
+                                  tools: List = None,
+                                  max_iterations: int = 10,
+                                  **kwargs):
+        """Create a Plan-and-Execute agent."""
+        from .agents.plan_execute import PlanExecuteAgent
+        base = self.create_agent(name, system_prompt, tools, **kwargs)
+        return PlanExecuteAgent(
+            name=base.name,
+            system_prompt=base.system_prompt,
+            llm=base.llm,
+            tools=list(base.tools.values()),
+            framework=self,
+            max_iterations=max_iterations
+        )
+        
+    def create_rewoo_agent(self, 
+                           name: str = "ReWOOAgent", 
+                           system_prompt: str = "You are a ReWOO planner. Create a plan to achieve the goal using available tools.", 
+                           tools: List = None,
+                           max_iterations: int = 10,
+                           **kwargs):
+        """Create a ReWOO (Reasoning WithOut Observation) agent."""
+        from .agents.rewoo import ReWOOAgent
+        base = self.create_agent(name, system_prompt, tools, **kwargs)
+        return ReWOOAgent(
+            name=base.name,
+            system_prompt=base.system_prompt,
+            llm=base.llm,
+            tools=list(base.tools.values()),
+            framework=self,
+            max_iterations=max_iterations
+        )
+        
+    def create_tot_agent(self, 
+                         name: str = "TreeOfThoughtsAgent", 
+                         system_prompt: str = "You are a deliberate thinker. Generate distinct, creative next steps or reasoning thoughts to achieve the goal.", 
+                         max_iterations: int = 3,
+                         **kwargs):
+        """Create a Tree-of-Thoughts agent."""
+        from .agents.tot import TreeOfThoughtsAgent
+        # ToT doesn't necessarily need tools in the same way, but we'll allow them
+        base = self.create_agent(name, system_prompt, **kwargs)
+        return TreeOfThoughtsAgent(
+            name=base.name,
+            system_prompt=base.system_prompt,
+            llm=base.llm,
+            tools=list(base.tools.values()),
+            framework=self,
+            max_iterations=max_iterations
+        )
+    
+    def create_planning_agent(self, 
+                              strategy: str = "plan-and-execute",
+                              name: Optional[str] = None, 
+                              system_prompt: Optional[str] = None, 
+                              tools: List = None,
+                              max_iterations: int = 10,
+                              **kwargs):
+        """
+        Unified factory for planning agents.
+        
+        Strategies:
+        - "plan-and-execute": Step-by-step planning.
+        - "rewoo": Reasoning WithOut Observation (Parallel).
+        - "tot": Tree-of-Thoughts (Multi-path reasoning).
+        """
+        strategy = strategy.lower()
+        
+        # Set default name/prompt if not provided
+        if not name:
+            name = f"{strategy.replace('-', ' ').title().replace(' ', '')}Agent"
+        if not system_prompt:
+            if strategy == "plan-and-execute":
+                system_prompt = "You are a master planner. Decompose the following goal into a sequence of actionable steps."
+            elif strategy == "rewoo":
+                system_prompt = "You are a ReWOO planner. Create a plan to achieve the goal using available tools."
+            elif strategy == "tot":
+                system_prompt = "You are a deliberate thinker. Generate distinct, creative next steps or reasoning thoughts to achieve the goal."
+
+        if strategy == "plan-and-execute":
+            return self.create_plan_execute_agent(name, system_prompt, tools, max_iterations=max_iterations, **kwargs)
+        elif strategy == "rewoo":
+            return self.create_rewoo_agent(name, system_prompt, tools, max_iterations=max_iterations, **kwargs)
+        elif strategy == "tot":
+            return self.create_tot_agent(name, system_prompt, max_iterations=max_iterations, **kwargs)
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
     
     def create_tool(self, name: str, func: Callable, description: str):
         """Create and register custom tool."""
@@ -348,6 +453,23 @@ class Kite:
         """Create workflow."""
         return self.pipeline.create(name)
     
+    def create_conversation(self, 
+                            agents: List["Agent"], 
+                            max_turns: int = 10, 
+                            min_turns: int = 3,
+                            termination_condition: str = "consensus"):
+        """
+        Create a multi-agent conversation manager.
+        """
+        from .conversation import ConversationManager
+        return ConversationManager(
+            agents=agents,
+            framework=self,
+            max_turns=max_turns,
+            min_turns=min_turns,
+            termination_condition=termination_condition
+        )
+
     async def process_parallel(self, tasks: List[Dict]) -> List[Dict]:
         """
         Run multiple agent tasks in parallel.
