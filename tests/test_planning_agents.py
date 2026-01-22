@@ -18,7 +18,7 @@ class TestPlanningAgents:
     async def test_plan_execute_api(self, ai):
         # Test unified API defaults
         planner = ai.create_planning_agent(strategy="plan-and-execute", max_iterations=2)
-        assert planner.name == "Plan_ExecuteAgent"
+        assert planner.name == "PlanAndExecuteAgent"
         assert planner.max_iterations == 2
         
         # Test execution

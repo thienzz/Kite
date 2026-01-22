@@ -82,13 +82,23 @@ class DocumentLoader:
             return cls.load_docx(file_path)
         elif ext == '.csv':
             return cls.load_csv(file_path)
+        elif ext == '.json':
+            # Add JSON support
+            try:
+                import json
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return json.dumps(data, indent=2)
+            except Exception as e:
+                return f"Error loading JSON: {str(e)}"
         elif ext in ['.html', '.htm']:
             return cls.load_html(file_path)
         elif ext in ['.txt', '.md']:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
-            return f"Unsupported file type: {ext}"
+            # Return None for unsupported formats instead of error message
+            return None
 
     @classmethod
     def load_directory(cls, directory_path: str) -> Dict[str, str]:

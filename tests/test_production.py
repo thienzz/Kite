@@ -28,7 +28,7 @@ class TestProductionFeatures(unittest.TestCase):
         self.memory.embedding_provider = self.mock_embed_provider
         
         self.ai = Kite(config={"llm_provider": "mock", "vector_backend": "memory"})
-        self.ai.llm = self.mock_llm
+        self.ai._llm = self.mock_llm
         self.ai.vector_memory.embedding_provider = self.mock_embed_provider
 
     def test_llm_streaming(self):

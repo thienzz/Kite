@@ -24,6 +24,11 @@ class ConversationManager:
                  max_turns: int = 10,
                  min_turns: int = 3,
                  termination_condition: str = "consensus"):
+        if not agents or len(agents) == 0:
+            raise ValueError("Conversation requires at least one agent")
+        if max_turns <= 0:
+            raise ValueError("max_turns must be greater than 0")
+            
         self.agents = agents
         self.framework = framework
         self.max_turns = max_turns

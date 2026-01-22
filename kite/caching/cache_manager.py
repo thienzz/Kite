@@ -93,3 +93,14 @@ class CacheManager:
             self.semantic_cache.set(key, value, ttl)
         else:
             self.memory_cache[key] = CacheEntry(value, ttl)
+    
+    def delete(self, key: str):
+        """Delete a specific key from cache."""
+        if key in self.memory_cache:
+            del self.memory_cache[key]
+    
+    def clear(self):
+        """Clear all cache entries."""
+        self.memory_cache.clear()
+        if self.semantic_cache:
+            self.semantic_cache.cache.clear()

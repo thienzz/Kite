@@ -1,4 +1,4 @@
-# 🪁 Kite
+﻿# 🪁 Kite
 
 **Production-Ready Agentic AI Framework**  
 *High-Performance • Lightweight • Simple*
@@ -259,7 +259,7 @@ See [`.env.example`](.env.example) for full configuration.
 The [`examples/`](examples/) directory contains 9 production-ready case studies:
 
 1. **Invoice Pipeline** - Deterministic 4-step processing with validation
-2. **Semantic Router** - Intent classification using SLMs
+2. **Semantic Router** - Intent classification using LLMs
 3. **SQL Analytics** - Natural language to SQL with safety checks
 4. **Research Assistant** - Multi-step search and synthesis
 5. **Enterprise System** - Full integration of all features
@@ -354,3 +354,4 @@ Built with:
   <strong>Built for developers who ship to production.</strong><br>
   Star ⭐ this repo if you find it useful!
 </p>
+
