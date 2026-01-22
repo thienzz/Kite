@@ -38,7 +38,47 @@ class Tool:
         self.call_count += 1
         
         try:
-            result = self.func(*args, **kwargs)
+            # Perform basic type casting based on signature
+            import inspect
+            sig = inspect.signature(self.func)
+            bound_args = sig.bind_partial(*args, **kwargs)
+            
+            casted_args = {}
+            for param_name, value in bound_args.arguments.items():
+                param = sig.parameters.get(param_name)
+                if param and param.annotation != inspect.Parameter.empty:
+                    # Basic casting for common types
+                    try:
+                        annotation = param.annotation
+                        if annotation == str:
+                            casted_args[param_name] = str(value)
+                        elif annotation == float:
+                            if isinstance(value, str):
+                                # Clean currency symbols and commas
+                                clean_val = value.replace('$', '').replace(',', '').strip()
+                                casted_args[param_name] = float(clean_val)
+                            else:
+                                casted_args[param_name] = float(value)
+                        elif annotation == int:
+                            if isinstance(value, str):
+                                # Clean currency symbols and commas
+                                clean_val = value.replace('$', '').replace(',', '').split('.')[0].strip()
+                                casted_args[param_name] = int(clean_val)
+                            else:
+                                casted_args[param_name] = int(value)
+                        elif annotation == bool:
+                            if isinstance(value, str):
+                                casted_args[param_name] = value.lower() in ("true", "1", "yes", "on")
+                            else:
+                                casted_args[param_name] = bool(value)
+                        else:
+                            casted_args[param_name] = value
+                    except:
+                        casted_args[param_name] = value
+                else:
+                    casted_args[param_name] = value
+            
+            result = self.func(**casted_args)
             return result
         except Exception as e:
             self.error_count += 1

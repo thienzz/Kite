@@ -103,22 +103,21 @@ class Kite:
     
     def _load_config(self) -> Dict:
         from dotenv import load_dotenv
-        load_dotenv() # Load standard .env
+        load_dotenv(override=True) # Load standard .env and override environment
         return {
             'llm_provider': os.getenv('LLM_PROVIDER', 'ollama'),
             'llm_model': os.getenv('LLM_MODEL'),
             'embedding_provider': os.getenv('EMBEDDING_PROVIDER', 'sentence-transformers'),
             'embedding_model': os.getenv('EMBEDDING_MODEL'),
-            'slm_provider': os.getenv('SLM_PROVIDER', 'ollama'),
-            'slm_sql_model': os.getenv('SLM_SQL_MODEL'),
-            'slm_classifier_model': os.getenv('SLM_CLASSIFIER_MODEL'),
-            'slm_code_review_model': os.getenv('SLM_CODE_REVIEW_MODEL'),
             'openai_api_key': os.getenv('OPENAI_API_KEY'),
             'groq_api_key': os.getenv('GROQ_API_KEY'),
             'vector_backend': os.getenv('VECTOR_BACKEND', 'memory'), # Default to memory if not set
             'circuit_breaker_threshold': int(os.getenv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', 3)),
             'circuit_breaker_timeout': int(os.getenv('CIRCUIT_BREAKER_TIMEOUT_SECONDS', 60)),
             'llm_timeout': float(os.getenv('LLM_TIMEOUT', 600.0)),
+            'semantic_router_threshold': float(os.getenv('SEMANTIC_ROUTER_THRESHOLD', 0.3)),
+            'router_type': os.getenv('ROUTER_TYPE', 'semantic'), # 'semantic' or 'llm'
+            'max_iterations': int(os.getenv('MAX_ITERATIONS', 10)),
         }
     
     @property
@@ -189,11 +188,17 @@ class Kite:
     @property
     def semantic_router(self):
         if self._semantic_router is None:
-            from .routing import SemanticRouter
-            self._semantic_router = SemanticRouter(
-                confidence_threshold=0.4,
-                embedding_provider=self.embeddings
-            )
+            router_type = self.config.get('router_type', 'semantic')
+            
+            if router_type == 'llm':
+                from .routing import LLMRouter
+                self._semantic_router = LLMRouter(llm=self.llm)
+            else:
+                from .routing import SemanticRouter
+                self._semantic_router = SemanticRouter(
+                    confidence_threshold=self.config.get('semantic_router_threshold', 0.3),
+                    embedding_provider=self.embeddings
+                )
         return self._semantic_router
 
     @property
@@ -311,16 +316,18 @@ class Kite:
         
         tools_list = tools or []
         
+        max_iter = self.config.get('max_iterations', 10)
+        
         if agent_type == "react":
-            return ReActAgent(name, system_prompt, agent_llm, tools_list, self)
+            return ReActAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
         elif agent_type == "plan_execute":
-            return PlanExecuteAgent(name, system_prompt, agent_llm, tools_list, self)
+            return PlanExecuteAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
         elif agent_type == "rewoo":
-            return ReWOOAgent(name, system_prompt, agent_llm, tools_list, self)
+            return ReWOOAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
         elif agent_type == "tot":
-            return TreeOfThoughtsAgent(name, system_prompt, agent_llm, tools_list, self)
+            return TreeOfThoughtsAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
             
-        return Agent(name, system_prompt, agent_llm, tools_list, self)
+        return Agent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
     
     def create_react_agent(self, 
                            name: str, 

@@ -1,29 +1,12 @@
-"""
-General-Purpose Agent
-Build agents for ANY use case.
-"""
-
+import json
+import asyncio
+import re
 from typing import List, Dict, Optional, Callable
 
 
 class Agent:
     """
-    General-purpose agent that can be customized for any task.
-    
-    Example:
-        # Data analyst agent
-        analyst = ai.create_agent(
-            name="DataAnalyst",
-            system_prompt="You are a data analyst. Analyze data and provide insights.",
-            tools=[sql_tool, viz_tool]
-        )
-        
-        # Customer support agent
-        support = ai.create_agent(
-            name="Support",
-            system_prompt="You are a helpful customer support agent.",
-            tools=[kb_search_tool, ticket_tool]
-        )
+    High-reliability agent with direct extraction and termination guards.
     """
     
     def __init__(self, 
@@ -31,18 +14,20 @@ class Agent:
                  system_prompt: str,
                  llm,
                  tools: List,
-                 framework):
+                 framework,
+                 max_iterations: int = 10):
         self.name = name
         self.system_prompt = system_prompt
         self.llm = llm
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
+        self.max_iterations = max_iterations
         
         # Stats
         self.call_count = 0
         self.success_count = 0
         self.metadata = {
-            "llm": getattr(llm, 'name', 'unknown')
+            "llm": getattr(llm, 'name', getattr(llm, 'model', 'unknown'))
         }
         
         # Log creation
@@ -51,235 +36,286 @@ class Agent:
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """
         Run agent on input.
-        
-        Args:
-            user_input: User input
-            context: Optional context
-            
-        Returns:
-            Result dict
         """
         self.call_count += 1
         
         try:
-            # Build messages
-            full_system_prompt = self.system_prompt
-            if context:
-                full_system_prompt += f"\n\nContext: {context}"
+            session_tool_results = {} # norm -> {"data": ..., "success": bool}
+            successful_norms = set()
+            failed_norms = {} # norm -> error_msg
+            messages = []
             
-            if self.tools:
-                tool_info = "\n\nCRITICAL: You MUST use the following tools to fulfill the user request. State clearly which tool you are using and with what parameters. Do NOT apologize for not having data if a tool is available.\nAvailable Tools:\n"
-                for tool in self.tools.values():
-                    tool_info += f"- {tool.name}: {tool.description}\n"
-                full_system_prompt += tool_info
+            def normalize_call(name: str, args: Dict) -> str:
+                if not isinstance(args, dict):
+                    return f"{name}:{str(args).strip()}"
+                clean = {str(k).lower(): str(v).strip() for k, v in args.items()}
+                sorted_str = json.dumps(clean, sort_keys=True)
+                return f"{name}:{sorted_str}"
+            
+            last_valid_response = ""
+
+            for i in range(self.max_iterations):
+                if i > 0:
+                    print(f"      [DEBUG] [{self.name}] Iteration {i+1}/{self.max_iterations}...")
+
+                # 1. Build Dynamic Memory
+                memory_text = ""
+                if session_tool_results:
+                    memory_text = "\n### CURRENT MEMORY (Verified Facts):\n"
+                    for norm, val in session_tool_results.items():
+                        if val['success']:
+                            memory_text += f"- {norm} -> {val['data']}\n"
                 
-            messages = [
-                {"role": "system", "content": full_system_prompt},
-                {"role": "user", "content": user_input}
-            ]
-            
-            # Get response
-            if hasattr(self.llm, 'chat_async'):
-                response = await self.llm.chat_async(messages)
-            elif hasattr(self.llm, 'complete_async'):
-                response = await self.llm.complete_async(system_prompt + "\n\nUser: " + user_input)
-            else:
-                import asyncio
-                # Fallback to sync chat or complete
-                if hasattr(self.llm, 'chat'):
-                    response = await asyncio.to_thread(self.llm.chat, messages)
+                # 2. Build Prompt
+                full_system_prompt = self.system_prompt
+                if context:
+                    full_system_prompt += f"\n\nContext: {context}"
+                
+                if self.tools:
+                    tool_info = f"\n\nAVAILABLE TOOLS:\n"
+                    for tool in self.tools.values():
+                        tool_info += f"- {tool.name}: {tool.description}\n"
+                    
+                    tool_info += f"""
+{memory_text}
+
+### CRITICAL OPERATIONAL RULES:
+1. **Mental Lock**: If a fact is in CURRENT MEMORY, you MUST NOT ask for it again. PROPOSING A REDUNDANT TOOL IS A FAILURE.
+2. **True Termination**: You MUST provide a "Final Answer: [result]" and STOP ONLY when the user's request is 100% fulfilled.
+3. **Evidence-Based Checklist**: When marking a task as [Done], you MUST include the SPECIFIC data retrieved. 
+   - Good: [Done] Found order ORD-001: Status is Shipped, delivery tomorrow.
+4. **Action Format**: Action: [{{"name": "...", "args": {{...}}}}] (Only if NEW data is needed)
+5. **No Placeholders**: Never use "Final Answer: None" or "Final Answer: Not yet". If you aren't done, ONLY provide an Action or Thought.
+
+### Reasoning Format:
+Thought: 
+  Goal: [objective]
+  Checklist:
+  - [status] task 1 (include specific data if Done)
+  Reasoning: [Analysis of Memory vs Goal]
+Action: [{{"name": "...", "args": {{...}}}}] (OMIT IF GOAL IS REACHED)
+Final Answer: [The final response to the user]
+"""
+                    full_system_prompt += tool_info
+
+                system_msg = {"role": "system", "content": full_system_prompt}
+                if i == 0:
+                    messages = [system_msg, {"role": "user", "content": user_input}]
                 else:
-                    response = await asyncio.to_thread(self.llm.complete, system_prompt + "\n\nUser: " + user_input)
-            
-            print(f"      [DEBUG] [{self.name}] Response: {response.strip()[:100]}...")
-            
-            # Use SLM as "Hands" for low-level extraction (if available)
-            tool_calls = await self._extract_tool_calls(response, context=context)
-            
-            if tool_calls:
-                # Execute tools
-                tool_results = []
-                import asyncio
-                for tool_name, tool_args in tool_calls:
-                    if tool_name in self.tools:
-                        try:
-                            # Tools might be sync and contain time.sleep or heavy computation
-                            # Execute in thread to avoid blocking the event loop
-                            result = await asyncio.to_thread(self.tools[tool_name].execute, **tool_args if isinstance(tool_args, dict) else tool_args)
-                            tool_results.append({"tool": tool_name, "result": result, "success": True})
-                        except Exception as tool_err:
-                            print(f"      [DEBUG] [{self.name}] Tool {tool_name} failed: {tool_err}")
-                            tool_results.append({"tool": tool_name, "error": str(tool_err), "success": False})
+                    messages[0] = system_msg 
                 
-                # Get final response with tool results
-                messages.append({"role": "assistant", "content": response})
-                messages.append({
-                    "role": "user",
-                    "content": f"Tool results: {tool_results}"
-                })
-                
-                try:
-                    if hasattr(self.llm, 'chat_async'):
-                        response = await self.llm.chat_async(messages)
-                    elif hasattr(self.llm, 'chat'):
+                # Get response
+                if hasattr(self.llm, 'chat_async'):
+                    response = await self.llm.chat_async(messages)
+                elif hasattr(self.llm, 'complete_async'):
+                    prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+                    response = await self.llm.complete_async(prompt)
+                else:
+                    if hasattr(self.llm, 'chat'):
                         response = await asyncio.to_thread(self.llm.chat, messages)
                     else:
-                        # For simple completion providers
-                        final_prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant: {response}\nTool results: {tool_results}\nSynthesize the final answer:"
-                        response = await asyncio.to_thread(self.llm.complete, final_prompt)
-                except Exception as synth_err:
-                    print(f"      [DEBUG] [{self.name}] Synthesis failed: {synth_err}")
-                    # Fallback to local response if synthesis fails (e.g. 429)
-                    response = f"I executed the tools but had issues summarizing: {tool_results}"
+                        prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+                        response = await asyncio.to_thread(self.llm.complete, prompt)
+                
+                # IMMEDIATE State Commitment
+                last_valid_response = response.strip()
+                
+                # High-Visibility Reasoning Box
+                border = "=" * 60
+                print(f"\n      {border}")
+                print(f"      [ {self.name} REASONING ]")
+                print(f"      {border}")
+                for line in last_valid_response.split('\n'):
+                    print(f"      | {line.strip()}")
+                print(f"      {border}\n")
+                
+                # 1. Extract tool calls FIRST to prevent premature termination
+                tool_calls = await self._extract_tool_calls(last_valid_response, context=context)
+                
+                # 2. Robust Termination Check
+                # Only break if "Final Answer:" exists AND hasn't been blocked by the presence of actions
+                final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_valid_response, re.IGNORECASE)
+                has_valid_answer = False
+                if final_answer_match:
+                    answer_text = final_answer_match.group(1).strip().lower()
+                    placeholders = ["none", "not yet", "waiting", "i'll wait", "not yet retrieved", "waiting for response"]
+                    if answer_text and not any(p in answer_text for p in placeholders):
+                         has_valid_answer = True
+                
+                # We ONLY break if we have a valid answer AND no pending tools
+                if has_valid_answer and not tool_calls:
+                    break
+                
+                if not tool_calls:
+                    print(f"      [{self.name}] No Action and no valid Final Answer. Nudging...")
+                    messages.append({"role": "assistant", "content": last_valid_response})
+                    messages.append({
+                        "role": "user", 
+                        "content": "ERROR: You provided neither an 'Action:' nor a 'Final Answer:'. If you are done, provide your final response after 'Final Answer:'. If not, provide a NEW 'Action:'."
+                    })
+                    continue
+
+                # Filter and Executerd
+                filtered_tool_calls = []
+                skipped_observations = []
+                for name, args in tool_calls:
+                    norm = normalize_call(name, args)
+                    if norm in successful_norms:
+                        print(f"      [{self.name}] Skipping redundant success: {name}({args})")
+                        skipped_observations.append(f"- Tool '{name}' previously returned: {session_tool_results[norm]['data']}")
+                    elif norm in failed_norms:
+                        print(f"      [{self.name}] Blocking known failure: {name}({args})")
+                        skipped_observations.append(f"- Tool '{name}' previously FAILED: {failed_norms[norm]}. Fix parameters.")
+                    else:
+                        filtered_tool_calls.append((name, args))
+                
+                if not filtered_tool_calls:
+                    print(f"      [{self.name}] All proposed actions are redundant. Forcing Final Answer.")
+                    messages.append({"role": "assistant", "content": last_valid_response})
+                    messages.append({
+                        "role": "user",
+                        "content": "CRITICAL: You are repeating tool calls already in your MEMORY. PROVIDE YOUR 'Final Answer:' NOW."
+                    })
+                    continue
+
+                # Execute
+                tool_results = []
+                for tool_name, tool_args in filtered_tool_calls:
+                    if tool_name in self.tools:
+                        norm = normalize_call(tool_name, tool_args)
+                        try:
+                            cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
+                            print(f"      | [ACTION] {tool_name}({tool_args})")
+                            result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            
+                            tool_results.append({"tool": tool_name, "result": result, "success": True})
+                            session_tool_results[norm] = {"data": result, "success": True}
+                            successful_norms.add(norm)
+                            if norm in failed_norms: del failed_norms[norm]
+                        except Exception as tool_err:
+                            err_msg = str(tool_err)
+                            print(f"      [{self.name} FAILED] {tool_name}: {err_msg}")
+                            tool_results.append({"tool": tool_name, "error": err_msg, "success": False})
+                            session_tool_results[norm] = {"data": err_msg, "success": False}
+                            failed_norms[norm] = err_msg
+                
+                messages.append({"role": "assistant", "content": last_valid_response})
+                observation_text = "Observations:\n"
+                for obs in skipped_observations:
+                    observation_text += obs + "\n"
+                for res in tool_results:
+                    if res.get('success'):
+                        observation_text += f"- Tool '{res['tool']}' returned: {res['result']}\n"
+                    else:
+                        observation_text += f"- Tool '{res['tool']}' FAILED: {res.get('error')}\n"
+                messages.append({"role": "user", "content": observation_text})
+            
+            # CLEAN FINAL ANSWER EXTRACTION
+            clean_answer = last_valid_response
+            final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_valid_response, re.IGNORECASE)
+            if final_answer_match:
+                clean_answer = final_answer_match.group(1).strip()
             
             self.success_count += 1
-            
             return {
                 "success": True,
-                "response": response,
-                "agent": self.name
+                "response": clean_answer, # Return ONLY the clean answer to the caller
+                "full_log": last_valid_response, # Keep logs for internal audit
+                "agent": self.name,
+                "iterations": i + 1
             }
             
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "agent": self.name
-            }
+            return {"success": False, "error": str(e), "agent": self.name}
     
     async def _extract_tool_calls(self, response: str, context: Optional[Dict] = None) -> List:
-        """
-        Extract tool calls from response.
-        Provides detailed tool definitions and context for better extraction.
-        """
-        if not self.tools:
-            return []
-            
-        import json
-        import asyncio
+        """Robust tool extraction combining direct regex and LLM fallback."""
+        if not self.tools: return []
         
-        # Build detailed tool definitions
-        tool_defs = []
-        for tool in self.tools.values():
-            tool_defs.append(tool.get_definition())
-            
+        # 1. OPTIMIZATION: Direct Regex Extraction from response text
+        # This is 100% reliable if the model follows the Action format.
+        # We look for a JSON block after the word "Action:"
+        action_match = re.search(r"Action:\s*(\[.*?\])", response, re.DOTALL)
+        if action_match:
+            try:
+                raw_json = action_match.group(1).strip()
+                # Pre-processing to fix common LLM JSON errors (like missing quotes on keys or trailing commas)
+                raw_json = re.sub(r'\}\s*\{', '}, {', raw_json)
+                calls = json.loads(raw_json)
+                if isinstance(calls, list):
+                    valid = self._sanitize_calls(calls)
+                    if valid:
+                        print(f"      [DEBUG] [{self.name}] Direct regex extraction successful: {len(valid)} calls")
+                        return valid
+            except Exception as e:
+                print(f"      [DEBUG] [{self.name}] Direct regex parsing failed: {e}. Falling back to LLM...")
+
+        # 2. FALLBACK: Use LLM for extraction
+        tool_defs = [tool.get_definition() for tool in self.tools.values()]
         prompt = f"""Extract tool calls from this text.
-Available tools:
-{json.dumps(tool_defs, indent=2)}
-
-{f"Context (use for missing IDs/params): {json.dumps(context)}" if context else ""}
-
+Available tools: {json.dumps(tool_defs, indent=2)}
 Text: {response}
 
-Output ONLY a JSON list of calls like: [{{"name": "tool_name", "args": {{"arg": "val"}}}}]]
-If no tools needed, return []."""
-
+### Instructions:
+1. ONLY extract NEW action calls.
+2. Output a valid JSON list: [{{"name": "...", "args": {{...}}}}]
+3. Return [] if no new action is needed.
+"""
         try:
-            # Use current LLM for extraction
-            if hasattr(self.llm, 'complete_async'):
-                raw_extraction = await self.llm.complete_async(prompt)
+            extractor = self.llm
+            if hasattr(extractor, 'complete_async'):
+                raw = await extractor.complete_async(prompt)
             else:
-                raw_extraction = await asyncio.to_thread(self.llm.complete, prompt)
+                raw = await asyncio.to_thread(extractor.complete, prompt)
             
-            print(f"      [DEBUG] Raw tool extraction: {raw_extraction.strip()[:100]}...")
+            blocks = re.findall(r'(\[[\s\S]*?\]|\{[\s\S]*?\})', raw.strip())
+            all_calls = []
+            for block in blocks:
+                try:
+                    parsed = json.loads(re.sub(r'\}\s*\{', '}, {', block))
+                    if isinstance(parsed, list): all_calls.extend(parsed)
+                    elif isinstance(parsed, dict) and 'name' in parsed: all_calls.append(parsed)
+                except: pass
             
-            # Clean JSON
-            json_text = raw_extraction.strip()
-            
-            # Extract JSON block if surrounded by text (common with Ollama)
-            import re
-            json_match = re.search(r'\[\s*\{.*\}\s*\]', json_text, re.DOTALL)
-            if json_match:
-                json_text = json_match.group(0)
-            elif "```json" in json_text:
-                json_text = json_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in json_text:
-                json_text = json_text.split("```")[1].split("```")[0].strip()
-            
-            # Final trim
-            json_text = json_text.strip()
-            if not json_text.startswith('['):
-                # Try simple recovery if it's just one object
-                if json_text.startswith('{'):
-                    json_text = f"[{json_text}]"
-                else:
-                    # Fuzzy recovery: look for tool names in the raw text
-                    valid_calls = []
-                    for name in self.tools:
-                        if name in raw_extraction:
-                            # If name found, try to extract something that looks like an ID/item
-                            # Very simple heuristic for common ecommerce cases
-                            import re
-                            # Look for something in quotes or following a colon
-                            match = re.search(r'["\']?(\w+-\d+|laptop|phone|tablet|stock)["\']?', raw_extraction, re.IGNORECASE)
-                            if match:
-                                # We found a name and a potential value, but we don't know the key.
-                                # Try to match the key from tool definition
-                                tool_def = self.tools[name].get_definition()
-                                first_param = list(tool_def['parameters'].keys())[0] if tool_def['parameters'] else 'id'
-                                valid_calls.append((name, {first_param: match.group(1)}))
-                    return valid_calls
+            valid = self._sanitize_calls(all_calls)
+            return valid
+        except: return []
 
-            calls = json.loads(json_text)
-            valid_calls = []
-            for c in calls:
-                if not isinstance(c, dict): continue
-                name = c.get('name')
-                if name in self.tools:
-                    tool = self.tools[name]
-                    tool_def = tool.get_definition()
-                    allowed_params = tool_def.get('parameters', {}).keys()
-                    
-                    # 1. Try common SLM argument keys
-                    args = {}
-                    for key in ['args', 'arguments', 'parameters', 'params', 'input']:
-                        if key in c and isinstance(c[key], dict):
-                            args = c[key]
-                            break
-                    
-                    # 2. Fallback: If still empty, check top-level keys
-                    if not args:
-                        args = {k: v for k, v in c.items() if k not in ['name', 'args', 'arguments', 'parameters', 'params', 'input']}
-                    
-                    # 3. CRITICAL: Sanitize arguments (remove keys NOT in tool signature)
-                    sanitized_args = {k: v for k, v in args.items() if k in allowed_params}
-                    
-                    # 4. If sanitization removed everything but prompt was valid, try positional fallback
-                    if args and not sanitized_args and len(allowed_params) == 1:
-                        first_param = list(allowed_params)[0]
-                        
-                        # Priority 1: Pick a key that contains the parameter name
-                        best_val = None
-                        for k, v in args.items():
-                            if first_param.lower() in k.lower():
-                                best_val = v
-                                break
-                        
-                        # Priority 2: Pick the first non-empty value
-                        if best_val is None:
-                            best_val = next((v for v in args.values() if v), None)
-                            
-                        if best_val:
-                            sanitized_args = {first_param: best_val}
-                    
-                    valid_calls.append((name, sanitized_args))
-            
-            if valid_calls:
-                 print(f"      [DEBUG] [{self.name}] Final tool calls: {valid_calls}")
-                 
-            return valid_calls
-        except Exception as e:
-            # Fallback to simple heuristic if SLM fails or returns garbage
-            print(f"      [DEBUG] [{self.name}] Tool extraction failed: {e}")
-            print(f"      [DEBUG] [{self.name}] Raw response extract attempt: {raw_extraction.strip()[:100] if 'raw_extraction' in locals() else 'None'}...")
-            return []
+    def _sanitize_calls(self, calls: List) -> List:
+        """Sanitize and validate raw tool call objects."""
+        valid = []
+        for c in calls:
+            if not isinstance(c, dict): continue
+            name = c.get('name')
+            if name in self.tools:
+                allowed = self.tools[name].get_definition().get('parameters', {}).keys()
+                
+                # Resolve args
+                args = {}
+                for k in ['args', 'arguments', 'parameters', 'params', 'input']:
+                    if k in c and isinstance(c[k], dict): 
+                        args = c[k]
+                        break
+                if not args: args = {k: v for k, v in c.items() if k not in ['name', 'args', 'arguments']}
+                
+                # Resilient mapping
+                sanitized = {k: v for k, v in args.items() if k in allowed}
+                if not sanitized and args and len(allowed) == 1:
+                    target_key = list(allowed)[0]
+                    # Map the most likely candidate from the provided dict
+                    best_val = next((v for v in args.values() if isinstance(v, (str, int, float))), None)
+                    if best_val:
+                        sanitized = {target_key: best_val}
+                
+                # Placeholder filter
+                if not any(isinstance(v, str) and (v.startswith('<') or '[' in v or v == 'id') for v in sanitized.values()):
+                    valid.append((name, sanitized))
+        return valid
     
     def get_metrics(self) -> Dict:
-        """Get agent metrics."""
         return {
             "name": self.name,
             "calls": self.call_count,
             "success": self.success_count,
-            "success_rate": (self.success_count / self.call_count * 100)
-            if self.call_count > 0 else 0
+            "success_rate": (self.success_count / self.call_count * 100) if self.call_count > 0 else 0
         }

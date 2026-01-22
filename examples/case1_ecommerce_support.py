@@ -118,7 +118,8 @@ async def main():
     ai = Kite(config={
         "circuit_breaker_enabled": True,
         "rate_limit_enabled": True,
-        "max_iterations": 10
+        "max_iterations": 10,
+        "semantic_router_threshold": 0.4
     })
     
     print("   [OK] Framework initialized")
@@ -133,25 +134,25 @@ async def main():
     search_tool = ai.create_tool(
         "search_order",
         search_order,
-        "Search order status and delivery information"
+        "Search order status and delivery using an order ID (e.g. 'ORD-001')."
     )
     
     refund_tool = ai.create_tool(
         "process_refund",
         process_refund,
-        "Process customer refund request"
+        "Process refund. Requires valid order_id and amount (float). Search for order first to get amount."
     )
     
     inventory_tool = ai.create_tool(
         "check_inventory",
         check_inventory,
-        "Check product availability and pricing"
+        "Check product availability. Use EXACT item name mentioned (e.g. 'laptop', 'phone')."
     )
     
     cancel_tool = ai.create_tool(
         "cancel_subscription",
         cancel_subscription,
-        "Cancel customer subscription"
+        "Cancel customer subscription. Search for order ID first if unknown."
     )
     
     print("   [OK] Created 4 business tools")
@@ -207,7 +208,12 @@ Suggest alternatives if items are out of stock.""",
             "Track my package",
             "When will my order arrive?",
             "Order status",
-            "Delivery information"
+            "Delivery information",
+            "Check order ORD-123",
+            "Where is ORD-001",
+            "package tracking",
+            "shipping update",
+            "is my order shipped?"
         ],
         handler=lambda q: order_agent.run(q)
     )
@@ -219,7 +225,11 @@ Suggest alternatives if items are out of stock.""",
             "Process my return",
             "Cancel my order",
             "Money back",
-            "Return policy"
+            "Return policy",
+            "need a refund",
+            "return this item",
+            "how to get money back?",
+            "refund status"
         ],
         handler=lambda q: refund_agent.run(q)
     )
@@ -231,7 +241,12 @@ Suggest alternatives if items are out of stock.""",
             "Product availability",
             "How much does it cost?",
             "Product information",
-            "Check inventory"
+            "Check inventory",
+            "Do you have laptops?",
+            "Is the phone available?",
+            "laptop price",
+            "phone stock count",
+            "is it available for purchase?"
         ],
         handler=lambda q: product_agent.run(q)
     )
@@ -252,7 +267,8 @@ Suggest alternatives if items are out of stock.""",
         "Where is my order ORD-001?",
         "I want a refund for order ORD-002",
         "Is the laptop in stock?",
-        "Cancel my subscription please"
+        "Cancel my subscription please",
+        "I need to cancel my subscription and get a refund for ORD-001"
     ]
     
     for i, query in enumerate(test_queries, 1):
@@ -267,7 +283,7 @@ Suggest alternatives if items are out of stock.""",
         
         print(f"   Route: {result['route']}")
         print(f"   Confidence: {result['confidence']:.2%}")
-        print(f"   Response: {result.get('response', 'Processing...')[:150]}...")
+        print(f"   Response: {result.get('response', 'Processing...')}")
         print(f"   Time: {elapsed:.2f}s")
     
     # ========================================================================
@@ -283,13 +299,14 @@ Suggest alternatives if items are out of stock.""",
         "Process refund for ORD-001"
     ]
     
-    print(f"\n   Processing {len(parallel_queries)} queries in parallel...")
-    
-    start_time = time.time()
-    
-    # Execute queries in parallel
-    tasks = [ai.semantic_router.route(q) for q in parallel_queries]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Execute queries in parallel with a small throttle for free tier API limits
+    print(f"\n   Processing {len(parallel_queries)} queries...")
+    results = []
+    for q in parallel_queries:
+        res = await ai.semantic_router.route(q)
+        results.append(res)
+        if os.getenv("LLM_PROVIDER") == "groq":
+            await asyncio.sleep(2) # Throttle to avoid 429 concurrency limits
     
     elapsed = time.time() - start_time
     

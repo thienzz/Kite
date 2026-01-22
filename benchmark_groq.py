@@ -21,7 +21,6 @@ async def benchmark_groq():
 
     # Force Groq provider
     os.environ["llm_provider"] = "groq"
-    os.environ["slm_provider"] = "groq"
     
     ai = AgenticAI()
     

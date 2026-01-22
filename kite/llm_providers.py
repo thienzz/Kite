@@ -21,6 +21,8 @@ import os
 import logging
 import json
 import asyncio
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 
 class BaseLLMProvider(ABC):
@@ -591,6 +593,7 @@ class GroqProvider(BaseLLMProvider):
         """Generate completion."""
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
     
+    @retry(wait=wait_exponential(multiplier=1, min=4, max=60), stop=stop_after_attempt(5), reraise=True)
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
         response = self.client.chat.completions.create(

@@ -22,8 +22,9 @@ class ReActAgent(Agent):
                  llm,
                  tools: List,
                  framework,
+                 max_iterations: int = 10,
                  kill_switch: Optional[KillSwitch] = None):
-        super().__init__(name, system_prompt, llm, tools, framework)
+        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations)
         self.kill_switch = kill_switch or KillSwitch()
         
     async def run_autonomous(self, goal: str, context: Optional[Dict] = None) -> Dict[str, Any]:

@@ -18,8 +18,7 @@ class ReWOOAgent(Agent):
     """
     
     def __init__(self, name, system_prompt, llm, tools, framework, max_iterations=10):
-        super().__init__(name, system_prompt, llm, tools, framework)
-        self.max_iterations = max_iterations
+        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations)
 
     async def run_rewoo(self, goal: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """

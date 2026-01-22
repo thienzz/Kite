@@ -15,8 +15,7 @@ class TreeOfThoughtsAgent(Agent):
     """
     
     def __init__(self, name, system_prompt, llm, tools, framework, max_iterations=3, branches=3):
-        super().__init__(name, system_prompt, llm, tools, framework)
-        self.max_iterations = max_iterations  # Acts as depth
+        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations)
         self.branches = branches
 
     async def run(self, problem: str, context: Optional[Dict] = None) -> Dict[str, Any]:
