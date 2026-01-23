@@ -44,12 +44,12 @@ class BaseLLMProvider(ABC):
         pass
     
     @abstractmethod
-    def stream_complete(self, prompt: str, **kwargs):
+    async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
         pass
         
     @abstractmethod
-    def stream_chat(self, messages: List[Dict], **kwargs):
+    async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
         pass
     
@@ -176,8 +176,6 @@ class OllamaProvider(BaseLLMProvider):
 
     async def complete_async(self, prompt: str, **kwargs) -> str:
         """Native async complete."""
-        # DEBUG
-        print(f"DEBUG: Ollama complete_async timeout={self.timeout}")
         import httpx
         
         params = self._sanitize_ollama_params({
@@ -254,8 +252,6 @@ class OllamaProvider(BaseLLMProvider):
 
     async def chat_async(self, messages: List[Dict], **kwargs) -> str:
         """Native async chat."""
-        # DEBUG
-        print(f"DEBUG: Ollama chat_async timeout={self.timeout}")
         import httpx
         
         params = self._sanitize_ollama_params({
@@ -304,43 +300,49 @@ class OllamaProvider(BaseLLMProvider):
         )
         return response.json()["embedding"]
     
-    def stream_complete(self, prompt: str, **kwargs):
+    async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
-        response = self.requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": True,
-                **kwargs
-            },
-            stream=True
-        )
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                yield chunk.get("response", "")
-                if chunk.get("done"):
-                    break
+        import httpx
+        import json
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": True,
+                    **kwargs
+                }
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        yield chunk.get("response", "")
+                        if chunk.get("done"):
+                            break
 
-    def stream_chat(self, messages: List[Dict], **kwargs):
+    async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        response = self.requests.post(
-            f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": True,
-                **kwargs
-            },
-            stream=True
-        )
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                yield chunk.get("message", {}).get("content", "")
-                if chunk.get("done"):
-                    break
+        import httpx
+        import json
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": True,
+                    **kwargs
+                }
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        yield chunk.get("message", {}).get("content", "")
+                        if chunk.get("done"):
+                            break
     
     @property
     def name(self) -> str:
@@ -366,8 +368,13 @@ class LMStudioProvider(BaseLLMProvider):
         try:
             import openai
             import requests
+            import httpx
             self.requests = requests
             self.client = openai.OpenAI(
+                base_url=base_url,
+                api_key="lm-studio"
+            )
+            self.async_client = openai.AsyncOpenAI(
                 base_url=base_url,
                 api_key="lm-studio"
             )
@@ -395,6 +402,24 @@ class LMStudioProvider(BaseLLMProvider):
         )
         return response.choices[0].text
     
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async completion."""
+        response = await self.async_client.completions.create(
+            model=self.model,
+            prompt=prompt,
+            **kwargs
+        )
+        return response.choices[0].text
+
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async chat completion."""
+        response = await self.async_client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
         response = self.client.chat.completions.create(
@@ -414,25 +439,25 @@ class LMStudioProvider(BaseLLMProvider):
     
     async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
-        stream = self.client.completions.create(
+        stream = await self.async_client.completions.create(
             model=self.model,
             prompt=prompt,
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].text:
                 yield chunk.choices[0].text
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        stream = self.client.chat.completions.create(
+        stream = await self.async_client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
     
@@ -480,8 +505,29 @@ class VLLMProvider(BaseLLMProvider):
         except Exception as e:
             raise ConnectionError(f"vLLM not running at {self.base_url}")
     
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async completion using httpx."""
+        import httpx
+        params = {
+            "prompt": prompt,
+            "max_tokens": kwargs.get("max_tokens", 512),
+            **kwargs
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/generate",
+                json=params
+            )
+            return response.json()["text"][0]
+
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async chat completion."""
+        # Convert to single prompt
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        return await self.complete_async(prompt, **kwargs)
+
     def complete(self, prompt: str, **kwargs) -> str:
-        """Generate completion."""
+        """Generate completion (sync)."""
         response = self.requests.post(
             f"{self.base_url}/generate",
             json={
@@ -491,7 +537,7 @@ class VLLMProvider(BaseLLMProvider):
             }
         )
         return response.json()["text"][0]
-    
+
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
         # Convert to single prompt
@@ -499,21 +545,21 @@ class VLLMProvider(BaseLLMProvider):
         return self.complete(prompt, **kwargs)
     
     async def stream_complete(self, prompt: str, **kwargs):
-        """Stream completion."""
-        response = self.requests.post(
-            f"{self.base_url}/generate",
-            json={
-                "prompt": prompt,
-                "stream": True,
-                "max_tokens": kwargs.get("max_tokens", 512),
-                **kwargs
-            },
-            stream=True
-        )
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                yield chunk.get("text", [""])[0]
+        """Stream completion using httpx."""
+        import httpx
+        import json
+        params = {
+            "prompt": prompt,
+            "stream": True,
+            "max_tokens": kwargs.get("max_tokens", 512),
+            **kwargs
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", f"{self.base_url}/generate", json=params) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        yield chunk.get("text", [""])[0]
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
@@ -587,12 +633,27 @@ class GroqProvider(BaseLLMProvider):
             raise ValueError("GROQ_API_KEY required")
         
         try:
-            from groq import Groq
+            from groq import Groq, AsyncGroq
             self.client = Groq(api_key=self.api_key)
+            self.async_client = AsyncGroq(api_key=self.api_key)
             self.logger.info(f"[OK] Groq connected: {model}")
         except ImportError:
             raise ImportError("pip install groq")
     
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async completion."""
+        return await self.chat_async([{"role": "user", "content": prompt}], **kwargs)
+
+    @retry(wait=wait_exponential(multiplier=1, min=4, max=60), stop=stop_after_attempt(5), reraise=True)
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async chat completion."""
+        response = await self.async_client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **kwargs
+        )
+        return response.choices[0].message.content
+
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate completion."""
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
@@ -609,25 +670,25 @@ class GroqProvider(BaseLLMProvider):
     
     async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
-        stream = self.client.chat.completions.create(
+        stream = await self.async_client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        stream = self.client.chat.completions.create(
+        stream = await self.async_client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
     
@@ -669,15 +730,38 @@ class TogetherProvider(BaseLLMProvider):
         except ImportError:
             raise ImportError("pip install together")
     
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async completion using httpx."""
+        import httpx
+        params = {
+            "model": self.model,
+            "prompt": prompt,
+            **kwargs
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.together.xyz/v1/completions",
+                json=params,
+                headers=headers
+            )
+            data = response.json()
+            return data['choices'][0]['text']
+
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async chat completion."""
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        return await self.complete_async(prompt, **kwargs)
+
     def complete(self, prompt: str, **kwargs) -> str:
-        """Generate completion."""
+        """Generate completion (sync)."""
         response = self.together.Complete.create(
             prompt=prompt,
             model=self.model,
             **kwargs
         )
         return response['output']['choices'][0]['text']
-    
+
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
         prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
@@ -692,28 +776,39 @@ class TogetherProvider(BaseLLMProvider):
         return response['data'][0]['embedding']
     
     async def stream_complete(self, prompt: str, **kwargs):
-        """Stream completion."""
-        # Together uses a slightly different API for streaming depending on the model,
-        # but the inference client usually supports it.
-        stream = self.together.completions.create(
-            model=self.model,
-            prompt=prompt,
-            stream=True,
+        """Stream completion using httpx."""
+        import httpx
+        import json
+        params = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
             **kwargs
-        )
-        for chunk in stream:
-            yield chunk.choices[0].text
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST", 
+                "https://api.together.xyz/v1/completions", 
+                json=params, 
+                headers=headers
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        line = line[6:]
+                    if not line or line == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        yield chunk['choices'][0]['text']
+                    except:
+                        continue
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        stream = self.together.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
-            **kwargs
-        )
-        for chunk in stream:
-            yield chunk.choices[0].delta.content
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        async for chunk in self.stream_complete(prompt, **kwargs):
+            yield chunk
     
     @property
     def name(self) -> str:
@@ -737,6 +832,7 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             import anthropic
             self.client = anthropic.Anthropic(api_key=self.api_key)
+            self.async_client = anthropic.AsyncAnthropic(api_key=self.api_key)
         except ImportError:
             raise ImportError("pip install anthropic")
     
@@ -751,6 +847,19 @@ class AnthropicProvider(BaseLLMProvider):
         )
         return response.content[0].text
     
+    async def complete_async(self, prompt: str, **kwargs) -> str:
+        """Async completion."""
+        return await self.chat_async([{"role": "user", "content": prompt}], **kwargs)
+
+    async def chat_async(self, messages: List[Dict], **kwargs) -> str:
+        """Async chat completion."""
+        response = await self.async_client.messages.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=kwargs.get("max_tokens", 1024)
+        )
+        return response.content[0].text
+
     async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
         async for chunk in self.stream_chat([{"role": "user", "content": prompt}], **kwargs):
@@ -758,12 +867,12 @@ class AnthropicProvider(BaseLLMProvider):
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        with self.client.messages.stream(
+        async with self.async_client.messages.stream(
             model=self.model,
             messages=messages,
             max_tokens=kwargs.get("max_tokens", 1024)
         ) as stream:
-            for text in stream.text_stream:
+            async for text in stream.text_stream:
                 yield text
     
     def embed(self, text: str) -> List[float]:
@@ -839,27 +948,37 @@ class OpenAIProvider(BaseLLMProvider):
         )
         return response.data[0].embedding
         
-    def stream_complete(self, prompt: str, **kwargs):
+    async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
-        stream = self.client.completions.create(
+        # Ensure async_client is initialized
+        if not hasattr(self, 'async_client'):
+            import openai
+            self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
+            
+        stream = await self.async_client.completions.create(
             model=self.model,
             prompt=prompt,
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if chunk.choices[0].text:
                 yield chunk.choices[0].text
 
-    def stream_chat(self, messages: List[Dict], **kwargs):
+    async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
-        stream = self.client.chat.completions.create(
+        # Ensure async_client is initialized
+        if not hasattr(self, 'async_client'):
+            import openai
+            self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
+
+        stream = await self.async_client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
             **kwargs
         )
-        for chunk in stream:
+        async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
     

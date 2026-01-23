@@ -1,5 +1,5 @@
 """
-CASE 7: HIGH-SPEED CUSTOMER SUPPORT (SIMPLE AGENTS)
+CASE 6: HIGH-SPEED CUSTOMER SUPPORT (SIMPLE AGENTS)
 ==================================================
 Demonstration of maximum performance and minimum cost.
 
@@ -21,7 +21,7 @@ from kite import Kite
 
 async def main():
     print("=" * 80)
-    print("CASE 7: HIGH-SPEED CUSTOMER SUPPORT (FASTEST CONFIG)")
+    print("CASE 6: HIGH-SPEED CUSTOMER SUPPORT (FASTEST CONFIG)")
     print("=" * 80)
     
     # 1. Initialize with Semantic Router (Default)
@@ -124,7 +124,7 @@ async def main():
         print(f"   Response: {result.get('response')}")
         print(f"   (Session: {session_context['session_id']}, Latency: {elapsed:.2f}s)")
 
-    print("\n[OK] CASE 7 COMPLETE")
+    print("\n[OK] CASE 6 COMPLETE")
 
 if __name__ == "__main__":
     asyncio.run(main())
