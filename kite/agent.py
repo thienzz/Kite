@@ -15,13 +15,15 @@ class Agent:
                  llm,
                  tools: List,
                  framework,
-                 max_iterations: int = 10):
+                 max_iterations: int = 10,
+                 agent_type: str = "simple"):
         self.name = name
         self.system_prompt = system_prompt
         self.llm = llm
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
         self.max_iterations = max_iterations
+        self.agent_type = agent_type
         
         # Stats
         self.call_count = 0
@@ -39,6 +41,113 @@ class Agent:
         """
         self.call_count += 1
         
+        if self.agent_type == "simple":
+            return await self._run_simple(user_input, context)
+        return await self._run_react(user_input, context)
+
+    async def _run_simple(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """Single-pass/Fast-pass version for maximum speed with tool support."""
+        system_p = self.system_prompt
+        if context:
+            system_p += f"\n\nContext: {context}"
+        
+        if self.tools:
+            system_p += "\n\n### AVAILABLE TOOLS:\n"
+            for tool in self.tools.values():
+                # Provide simplified arg names for better LLM adherence in simple mode
+                defn = tool.get_definition()
+                params = list(defn.get('parameters', {}).keys())
+                system_p += f"- {tool.name}: {tool.description} (Expected Arguments: {params})\n"
+            
+            system_p += """
+### OPERATIONAL RULES:
+1. **Tool Use**: If you need information from a tool, you MUST use an Action.
+2. **Format**: Use the following format:
+   Action: [{"name": "...", "args": {...}}]
+3. **No Placeholders**: Never guess or hallucinate data. If you don't know, use a Tool or say you don't know.
+4. **Final Answer**: Once you have all info, provide it after 'Final Answer:'.
+"""
+
+        messages = [
+            {"role": "system", "content": system_p},
+            {"role": "user", "content": user_input}
+        ]
+        
+        try:
+            last_response = ""
+            iterations = 0
+            # Simple mode allows up to 3 steps (e.g. Search -> Process -> Final Answer)
+            for i in range(3):
+                iterations = i + 1
+                response = await self._call_llm(messages)
+                last_response = response.strip()
+                messages.append({"role": "assistant", "content": last_response})
+
+                # Simple visibility
+                if "Action:" in last_response or "Final Answer:" in last_response:
+                    border = "-" * 40
+                    print(f"\n      {border}\n      [ {self.name} (SIMPLE) ] Step {iterations}\n      {border}")
+                    for line in last_response.split('\n'):
+                        if line.strip(): print(f"      | {line.strip()}")
+                    print(f"      {border}\n")
+
+                # Tool extraction
+                tool_calls = await self._extract_tool_calls(last_response, context=context)
+                if not tool_calls:
+                    break
+                
+                # Execute tools
+                observation_text = "Observations:\n"
+                for tool_name, tool_args in tool_calls:
+                    if tool_name in self.tools:
+                        try:
+                            cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
+                            print(f"      | [ACTION] {tool_name}({tool_args})")
+                            result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            observation_text += f"- Tool '{tool_name}' returned: {result}\n"
+                        except Exception as e:
+                            observation_text += f"- Tool '{tool_name}' FAILED: {str(e)}\n"
+                
+                messages.append({"role": "user", "content": observation_text})
+                # Maximum 2 action interactions in 'simple' mode to keep it fast
+                if i == 1: continue
+            
+            # Extract final answer
+            clean_answer = last_response
+            final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_response, re.IGNORECASE)
+            if final_answer_match:
+                clean_answer = final_answer_match.group(1).strip()
+            
+            self.success_count += 1
+            return {
+                "success": True,
+                "response": clean_answer,
+                "agent": self.name,
+                "type": "simple",
+                "iterations": iterations
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e), "agent": self.name}
+
+    async def _call_llm(self, messages: List[Dict]) -> str:
+        """Centralized LLM call handles both Chat and Completion APIs."""
+        if hasattr(self.llm, 'chat_async'):
+            return await self.llm.chat_async(messages)
+        
+        # Fallback to complete (build text prompt)
+        prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+        
+        if hasattr(self.llm, 'complete_async'):
+            return await self.llm.complete_async(prompt)
+        
+        # Sync fallbacks
+        if hasattr(self.llm, 'chat'):
+            return await asyncio.to_thread(self.llm.chat, messages)
+            
+        return await asyncio.to_thread(self.llm.complete, prompt)
+
+    async def _run_react(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """Multi-iteration loop version with tool-calling and self-healing."""
         try:
             session_tool_results = {} # norm -> {"data": ..., "success": bool}
             successful_norms = set()
@@ -104,18 +213,8 @@ Final Answer: [The final response to the user]
                 else:
                     messages[0] = system_msg 
                 
-                # Get response
-                if hasattr(self.llm, 'chat_async'):
-                    response = await self.llm.chat_async(messages)
-                elif hasattr(self.llm, 'complete_async'):
-                    prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
-                    response = await self.llm.complete_async(prompt)
-                else:
-                    if hasattr(self.llm, 'chat'):
-                        response = await asyncio.to_thread(self.llm.chat, messages)
-                    else:
-                        prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
-                        response = await asyncio.to_thread(self.llm.complete, prompt)
+                # Get response using unified caller
+                response = await self._call_llm(messages)
                 
                 # IMMEDIATE State Commitment
                 last_valid_response = response.strip()
@@ -222,7 +321,8 @@ Final Answer: [The final response to the user]
                 "response": clean_answer, # Return ONLY the clean answer to the caller
                 "full_log": last_valid_response, # Keep logs for internal audit
                 "agent": self.name,
-                "iterations": i + 1
+                "iterations": i + 1,
+                "type": "react"
             }
             
         except Exception as e:

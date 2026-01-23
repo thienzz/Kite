@@ -27,6 +27,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from kite import Kite
+from kite.routing.llm_router import LLMRouter
 
 
 # ============================================================================
@@ -171,7 +172,8 @@ async def main():
         system_prompt="""You are an order support specialist.
 Help customers track orders, check delivery status, and answer shipping questions.
 Always be professional and provide accurate information from the order database.""",
-        tools=[search_tool]
+        tools=[search_tool],
+        agent_type="react"
     )
     
     refund_agent = ai.create_agent(
@@ -179,7 +181,8 @@ Always be professional and provide accurate information from the order database.
         system_prompt="""You are a refund specialist.
 Process refund requests, handle returns, and resolve payment issues.
 Always confirm order details before processing refunds.""",
-        tools=[search_tool, refund_tool, cancel_tool]
+        tools=[search_tool, refund_tool, cancel_tool],
+        agent_type="react"
     )
     
     product_agent = ai.create_agent(
@@ -187,7 +190,8 @@ Always confirm order details before processing refunds.""",
         system_prompt="""You are a product specialist.
 Help customers with product information, availability, and pricing.
 Suggest alternatives if items are out of stock.""",
-        tools=[inventory_tool]
+        tools=[inventory_tool],
+        agent_type="react"
     )
     
     print("   [OK] Created 3 specialized agents")
@@ -196,58 +200,29 @@ Suggest alternatives if items are out of stock.""",
     print("      - ProductSpecialist (inventory & pricing)")
     
     # ========================================================================
-    # STEP 4: Configure Semantic Router
+    # STEP 4: Configure LLM Router
     # ========================================================================
-    print("\n[STEP 4] Configuring semantic router...")
+    print("\n[STEP 4] Configuring LLM router...")
+    
+    # Initialize LLM Router
+    ai.llm_router = LLMRouter(llm=ai.llm)
     
     # Register agents with the router
-    ai.semantic_router.add_route(
+    ai.llm_router.add_route(
         name="order_support",
-        examples=[
-            "Where is my order?",
-            "Track my package",
-            "When will my order arrive?",
-            "Order status",
-            "Delivery information",
-            "Check order ORD-123",
-            "Where is ORD-001",
-            "package tracking",
-            "shipping update",
-            "is my order shipped?"
-        ],
+        description="Handle order tracking, delivery status, and shipping updates.",
         handler=lambda q: order_agent.run(q)
     )
     
-    ai.semantic_router.add_route(
+    ai.llm_router.add_route(
         name="refund_support",
-        examples=[
-            "I want a refund",
-            "Process my return",
-            "Cancel my order",
-            "Money back",
-            "Return policy",
-            "need a refund",
-            "return this item",
-            "how to get money back?",
-            "refund status"
-        ],
+        description="Process refunds, returns, and payment issues.",
         handler=lambda q: refund_agent.run(q)
     )
     
-    ai.semantic_router.add_route(
+    ai.llm_router.add_route(
         name="product_support",
-        examples=[
-            "Is this in stock?",
-            "Product availability",
-            "How much does it cost?",
-            "Product information",
-            "Check inventory",
-            "Do you have laptops?",
-            "Is the phone available?",
-            "laptop price",
-            "phone stock count",
-            "is it available for purchase?"
-        ],
+        description="Check product availability, pricing, and specs.",
         handler=lambda q: product_agent.run(q)
     )
     
@@ -277,7 +252,7 @@ Suggest alternatives if items are out of stock.""",
         start_time = time.time()
         
         # Route query to appropriate agent
-        result = await ai.semantic_router.route(query)
+        result = await ai.llm_router.route(query)
         
         elapsed = time.time() - start_time
         
@@ -303,7 +278,7 @@ Suggest alternatives if items are out of stock.""",
     print(f"\n   Processing {len(parallel_queries)} queries...")
     results = []
     for q in parallel_queries:
-        res = await ai.semantic_router.route(q)
+        res = await ai.llm_router.route(q)
         results.append(res)
         if os.getenv("LLM_PROVIDER") == "groq":
             await asyncio.sleep(2) # Throttle to avoid 429 concurrency limits
@@ -343,10 +318,9 @@ Suggest alternatives if items are out of stock.""",
     
     # Router metrics
     print("\n[STATS] Router Statistics:")
-    router_stats = ai.semantic_router.get_stats()
+    router_stats = ai.llm_router.get_stats()
     print(f"   Total Routes: {router_stats['total_routes']}")
-    print(f"   Confidence Threshold: {router_stats['confidence_threshold']:.0%}")
-    print(f"   Cache Hit Rate: {router_stats['cache_hit_rate']:.1%}")
+    print(f"   Router Type: {router_stats.get('type', 'LLM')}")
     
     # Safety metrics
     print("\n[SAFETY]  Safety Patterns:")

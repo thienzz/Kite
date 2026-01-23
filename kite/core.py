@@ -132,10 +132,10 @@ class Kite:
                         llm_provider,
                         self.config.get('llm_model'),
                         api_key=api_key,
-                        timeout=self.config.get('llm_timeout', 180.0)
+                        timeout=self.config.get('llm_timeout', 600.0)
                     )
                 else:
-                    self._llm = LLMFactory.auto_detect()
+                    self._llm = LLMFactory.auto_detect(timeout=self.config.get('llm_timeout', 600.0))
             except Exception as e:
                 self.logger.warning(f"    LLM initialization failed: {e}")
                 self._llm = LLMFactory.auto_detect()
@@ -297,7 +297,7 @@ class Kite:
                      agent_type: str = "base"):
         """
         Create custom agent with optional specific AI configuration.
-        Supported types: 'base', 'react', 'plan_execute', 'rewoo', 'tot'
+        Supported types: 'simple' (one-shot), 'react' (looping), 'plan_execute', 'rewoo', 'tot'
         """
         from .agent import Agent
         from .agents.react_agent import ReActAgent
@@ -327,7 +327,9 @@ class Kite:
         elif agent_type == "tot":
             return TreeOfThoughtsAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
             
-        return Agent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
+        # Default to simple Agent
+        mode = "react" if agent_type == "react" else "simple"
+        return Agent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter, agent_type=mode)
     
     def create_react_agent(self, 
                            name: str, 

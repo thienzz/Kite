@@ -176,6 +176,8 @@ class OllamaProvider(BaseLLMProvider):
 
     async def complete_async(self, prompt: str, **kwargs) -> str:
         """Native async complete."""
+        # DEBUG
+        print(f"DEBUG: Ollama complete_async timeout={self.timeout}")
         import httpx
         
         params = self._sanitize_ollama_params({
@@ -252,6 +254,8 @@ class OllamaProvider(BaseLLMProvider):
 
     async def chat_async(self, messages: List[Dict], **kwargs) -> str:
         """Native async chat."""
+        # DEBUG
+        print(f"DEBUG: Ollama chat_async timeout={self.timeout}")
         import httpx
         
         params = self._sanitize_ollama_params({
@@ -923,7 +927,7 @@ class LLMFactory:
             return provider_class(**kwargs)
     
     @classmethod
-    def auto_detect(cls) -> BaseLLMProvider:
+    def auto_detect(cls, timeout: float = 600.0) -> BaseLLMProvider:
         """
         Auto-detect best available provider.
         
@@ -937,7 +941,7 @@ class LLMFactory:
         
         # Try Ollama
         try:
-            provider = cls.create("ollama")
+            provider = cls.create("ollama", timeout=timeout)
             logger.info("[OK] Using Ollama (local, free)")
             return provider
         except:
@@ -945,7 +949,7 @@ class LLMFactory:
         
         # Try LM Studio
         try:
-            provider = cls.create("lmstudio")
+            provider = cls.create("lmstudio", timeout=timeout)
             logger.info("[OK] Using LM Studio (local, free)")
             return provider
         except:
@@ -954,7 +958,7 @@ class LLMFactory:
         # Try Groq
         if os.getenv("GROQ_API_KEY"):
             try:
-                provider = cls.create("groq")
+                provider = cls.create("groq", timeout=timeout)
                 logger.info("[OK] Using Groq (cloud, free tier)")
                 return provider
             except:
@@ -963,7 +967,7 @@ class LLMFactory:
         # Fallback to OpenAI
         if os.getenv("OPENAI_API_KEY"):
             try:
-                provider = cls.create("openai")
+                provider = cls.create("openai", timeout=timeout)
                 logger.warning("  Using OpenAI (commercial, paid)")
                 return provider
             except:
@@ -971,7 +975,7 @@ class LLMFactory:
         
         # Try mock as ultimate fallback
         try:
-            return cls.create("mock")
+            return cls.create("mock", timeout=timeout)
         except:
             pass
             
