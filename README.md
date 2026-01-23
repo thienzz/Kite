@@ -5,7 +5,14 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](https://github.com/thienzz/Kite/releases)
+[![Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/thienzz/Kite)
 
+> ⚠️ **Alpha Release**: v0.1.0 is an early release. Not recommended for production use without thorough testing.
+
+[Installation](#installation) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Examples](#examples) • [Contributing](#contributing)
+
+---
 Kite is a **production-grade framework** for building intelligent AI agents and workflows. Designed for real-world applications, it bridges the gap between probabilistic LLM outputs and deterministic business logic with enterprise-grade safety, memory, and observability.
 
 ---
