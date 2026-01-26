@@ -5,13 +5,101 @@ General-purpose framework for ANY agentic AI application.
 
 import os
 import logging
+import json
 from typing import Dict, Optional, Any, Callable, List
+from datetime import datetime
 from .data_loaders import DocumentLoader
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+class EventBus:
+    """Simple asynchronous event bus for pub/sub monitoring."""
+    def __init__(self):
+        self._subscribers = {}
+        self._relays = []
+        self.logger = logging.getLogger("EventBus")
+
+    def add_relay(self, url: str):
+        if url not in self._relays:
+            self._relays.append(url)
+            self.logger.info(f"Added event relay to: {url}")
+
+    def subscribe(self, event_name: str, callback: Callable):
+        if event_name not in self._subscribers:
+            self._subscribers[event_name] = []
+        self._subscribers[event_name].append(callback)
+        self.logger.debug(f"Subscribed to {event_name}")
+
+    def emit(self, event_name: str, data: Any):
+        self.logger.debug(f"Emitting {event_name}")
+        callbacks = self._subscribers.get(event_name, [])
+        # Also support catch-all "*" subscribers
+        callbacks += self._subscribers.get("*", [])
+        
+        for cb in callbacks:
+            try:
+                import asyncio
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(event_name, data))
+                else:
+                    cb(event_name, data)
+            except Exception as e:
+                self.logger.error(f"Error in event callback for {event_name}: {e}")
+        
+        # Also emit to external relays
+        if self._relays:
+            for relay_url in self._relays:
+                try:
+                    import asyncio
+                    asyncio.create_task(self._relay_event(relay_url, event_name, data))
+                except: pass
+
+    async def _relay_event(self, url: str, event: str, data: Any):
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json={"event": event, "data": data, "timestamp": datetime.now().isoformat()}, timeout=2.0)
+                if resp.status_code != 200:
+                    self.logger.debug(f"Relay {url} returned {resp.status_code}")
+        except Exception as e:
+            # Fallback print for debugging
+            print(f"   [Relay Error] Failed to send {event} to {url}: {e}")
+
+
+class KnowledgeStore:
+    """Lightweight knowledge manager for query templates and context."""
+    def __init__(self, knowledge_dir: str = "knowledge"):
+        self.knowledge_dir = knowledge_dir
+        self.data = {}
+        self.load()
+
+    def load(self):
+        if not os.path.exists(self.knowledge_dir):
+            os.makedirs(self.knowledge_dir)
+            return
+        for filename in os.listdir(self.knowledge_dir):
+            if filename.endswith(".json"):
+                path = os.path.join(self.knowledge_dir, filename)
+                try:
+                    with open(path, "r") as f:
+                        name = filename.replace(".json", "")
+                        self.data[name] = json.load(f)
+                except Exception as e:
+                    print(f"Error loading knowledge {filename}: {e}")
+
+    def get(self, key_path: str, default: Any = None) -> Any:
+        # Support dot notation: "linkedin_queries.b2b_software"
+        parts = key_path.split(".")
+        current = self.data
+        for p in parts:
+            if isinstance(current, dict) and p in current:
+                current = current[p]
+            else:
+                return default
+        return current
 
 
 class Kite:
@@ -62,13 +150,53 @@ class Kite:
         self._cache = None
         self._db_mcp = None
         
+        # New Event System for Pub/Sub monitoring
+        self.event_bus = EventBus()
+        self.knowledge = KnowledgeStore()
+        
         self.data_loader = DocumentLoader()
         
         # Only initialize core safety eagerly
         self._init_safety()
         
         self.logger.info("[OK] Kite initialized (lazy-loading enabled)")
+
+    def add_knowledge_source(self, source_type: str, path: str, name: str):
+        """Explicitly register and index a knowledge source."""
+        self.logger.info(f"Adding knowledge source: {name} (Type: {source_type})")
+        
+        if source_type == "local_json":
+            if not os.path.exists(path):
+                self.logger.error(f"Knowledge file not found: {path}")
+                return
+            
+            with open(path, 'r') as f:
+                data = json.load(f)
+                # Store in KnowledgeStore for structured access
+                self.knowledge.data[name] = data
+                
+                # Also index into VectorMemory for semantic retrieval
+                for key, val in data.items():
+                    doc_id = f"k_{name}_{key}"
+                    text = f"Expert info for {key}: {val}"
+                    self.vector_memory.add_document(doc_id, text, metadata={"source": name, "key": key})
+        
+        elif source_type == "vector_db":
+            self.logger.info(f"Connected to external vector source: {path}")
+            # Logic for external DB connection
+            pass
+        
+        elif source_type == "mcp_resource":
+            self.logger.info(f"Registering MCP Resource: {path}")
+            # Logic for MCP integration
+            pass
     
+    def add_event_relay(self, url: str):
+        """Add an external HTTP endpoint to relay all events to."""
+        if hasattr(self, 'event_bus'):
+            self.event_bus.add_relay(url)
+            self.logger.info(f"Added event relay to: {url}")
+
     def load_document(self, path: str, doc_id: Optional[str] = None):
         """Load and store document(s) using DocumentLoader."""
         if os.path.isdir(path):
@@ -212,12 +340,9 @@ class Kite:
     def tools(self):
         if self._tools is None:
             from .tool_registry import ToolRegistry
-            from .tools.contrib import web_search, calculator, get_current_datetime
             self._tools = ToolRegistry(self.config, self.logger)
-            # Register standard contrib tools
-            self.create_tool("web_search", web_search, "Search the web for information")
-            self.create_tool("calculator", calculator, "Evaluate mathematical expressions")
-            self.create_tool("get_datetime", get_current_datetime, "Get current date and time")
+            # Centralized registration of official contrib tools
+            self._tools.load_standard_tools(self)
         return self._tools
 
     @property
@@ -294,7 +419,8 @@ class Kite:
                      tools: List = None,
                      llm_provider: str = None,
                      llm_model: str = None,
-                     agent_type: str = "base"):
+                     agent_type: str = "base",
+                     knowledge_sources: List[str] = None):
         """
         Create custom agent with optional specific AI configuration.
         Supported types: 'base', 'react', 'plan_execute', 'rewoo', 'tot'
@@ -319,7 +445,7 @@ class Kite:
         max_iter = self.config.get('max_iterations', 10)
         
         if agent_type == "react":
-            return ReActAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
+            return ReActAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter, knowledge_sources=knowledge_sources)
         elif agent_type == "plan_execute":
             return PlanExecuteAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
         elif agent_type == "rewoo":
@@ -327,7 +453,7 @@ class Kite:
         elif agent_type == "tot":
             return TreeOfThoughtsAgent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
             
-        return Agent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter)
+        return Agent(name, system_prompt, agent_llm, tools_list, self, max_iterations=max_iter, knowledge_sources=knowledge_sources)
     
     def create_react_agent(self, 
                            name: str, 
@@ -452,13 +578,12 @@ class Kite:
         """Create and register custom tool."""
         from .tool import Tool
         tool = Tool(name, func, description)
-        if hasattr(self, 'tools'):
-            self.tools.register(name, tool)
+        self.tools.register(name, tool)
         return tool
     
     def create_workflow(self, name: str):
         """Create workflow."""
-        return self.pipeline.create(name)
+        return self.pipeline.create(name, event_bus=self.event_bus)
     
     def create_conversation(self, 
                             agents: List["Agent"], 
@@ -477,7 +602,7 @@ class Kite:
             termination_condition=termination_condition
         )
 
-    async def process_parallel(self, tasks: List[Dict]) -> List[Dict]:
+    async def process(self, tasks: List[Dict]) -> List[Dict]:
         """
         Run multiple agent tasks in parallel.
         
@@ -495,15 +620,28 @@ class Kite:
         async_tasks = []
         for task in tasks:
             agent = task['agent']
-            if isinstance(agent, str):
-                # We don't have a direct name -> agent map in Kite yet, 
-                # usually agents are managed by the user or router.
-                # For this implementation, we assume the agent object is passed.
-                pass
-            
             async_tasks.append(agent.run(task['input'], task.get('context')))
             
         return await asyncio.gather(*async_tasks)
+
+    def process_sync(self, tasks: List[Dict]) -> List[Dict]:
+        """
+        Synchronous wrapper for process.
+        Runs multiple agent tasks in parallel without requiring async/await in the caller.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(self.process(tasks))
+        else:
+            return asyncio.run(self.process(tasks))
 
     def get_metrics(self) -> Dict:
         return {
@@ -512,3 +650,78 @@ class Kite:
             'vector_memory': getattr(self.vector_memory, 'get_metrics', lambda: {})(),
             'session_memory': getattr(self.session_memory, 'get_metrics', lambda: {})(),
         }
+
+    def enable_verbose_monitoring(self):
+        """Enable standardized console feedback for all events."""
+        def default_on_event(event, data):
+            agent = data.get('agent') or data.get('pipeline') or 'System'
+            
+            if "thought" in event:
+                print(f"   [{agent}] Thinking: {data.get('reasoning', '')[:100]}...")
+            elif "action" in event:
+                print(f"   [{agent}] Action: {data.get('tool')}({data.get('args', {})})")
+            elif "observation" in event:
+                obs = str(data.get('observation', ''))
+                print(f"   [{agent}] Observation: {obs[:100]}...")
+            elif "complete" in event:
+                print(f"   [{agent}] Task Completed.")
+            elif "error" in event:
+                print(f"   [{agent}] ERROR: {data.get('error')}")
+            elif "pipeline:step" in event:
+                print(f"   [Pipeline] Step '{data.get('step')}' finished.")
+            elif "supervisor" in event:
+                print(f"   [Supervisor] {data.get('message')}")
+
+        self.event_bus.subscribe("*", default_on_event)
+        self.logger.info("Verbose monitoring enabled via Console")
+
+
+class MasterAgent:
+    """High-level supervisor for goal-driven autonomous operations."""
+    def __init__(self, name: str, framework):
+        self.name = name
+        self.framework = framework
+        self.state = {"goal_reached": False, "count": 0, "results": []}
+
+    async def run_until(self, goal_description: str, check_fn: Callable, max_iterations: int = 5):
+        """
+        Execute a goal-driven loop.
+        The caller (orchestrator script) should yield the results back to update state.
+        """
+        self.framework.event_bus.emit("supervisor:goal_set", {
+            "master": self.name,
+            "goal": goal_description,
+            "message": f"Global Mission Started: {goal_description}"
+        })
+
+        for i in range(max_iterations):
+            self.framework.event_bus.emit("supervisor:iteration_start", {
+                "master": self.name,
+                "iteration": i + 1,
+                "message": f"Planning Iteration {i+1} to reach goal..."
+            })
+
+            # The implementation script will handle the actual agent calls
+            # and update supervisor.state["count"] and supervisor.state["results"]
+            yield i + 1
+
+            # Check if goal is met
+            if check_fn(self.state):
+                self.framework.event_bus.emit("supervisor:goal_reached", {
+                    "master": self.name,
+                    "count": self.state["count"],
+                    "message": f"MISSION SUCCESS: Goal reached in {i+1} iterations!"
+                })
+                return
+
+            self.framework.event_bus.emit("supervisor:goal_check", {
+                "master": self.name,
+                "current": self.state["count"],
+                "status": "Goal incomplete. Continuing...",
+                "message": f"Currently at {self.state['count']} items. Need more."
+            })
+
+        self.framework.event_bus.emit("supervisor:max_iterations", {
+            "master": self.name,
+            "error": "Failed to meet goal within iteration limit."
+        })

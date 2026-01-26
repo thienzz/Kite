@@ -117,3 +117,4 @@ checkpoints/
 *.bak
 *~
 /vector_db
+/knowledge

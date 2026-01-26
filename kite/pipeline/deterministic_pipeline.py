@@ -59,13 +59,15 @@ class DeterministicPipeline:
         result = pipeline.execute(raw_data)
     """
     
-    def __init__(self, name: str = "pipeline"):
+    def __init__(self, name: str = "pipeline", event_bus = None):
         self.name = name
+        self.event_bus = event_bus
         self.steps: List[tuple[str, Callable]] = []
         self.checkpoints: Dict[str, bool] = {}  # step_name -> approval_required
         self.intervention_points: Dict[str, Callable] = {}  # step_name -> callback
         self.history: List[PipelineState] = []
-        print(f"[OK] Pipeline '{self.name}' initialized")
+        if self.event_bus:
+            self.event_bus.emit("pipeline:init", {"pipeline": self.name})
     
     def add_step(self, name: str, func: Callable):
         """Add a step to the pipeline."""
@@ -85,7 +87,8 @@ class DeterministicPipeline:
     def execute(self, data: Any, task_id: Optional[str] = None) -> PipelineState:
         """Execute all steps in the pipeline sequentially."""
         t_id = task_id or f"TASK-{len(self.history)+1:04d}"
-        print(f"\n[START] Executing pipeline: {self.name} (Task: {t_id})")
+        if self.event_bus:
+            self.event_bus.emit("pipeline:start", {"pipeline": self.name, "task_id": t_id, "data": str(data)[:100]})
         
         state = PipelineState(task_id=t_id, data=data)
         state.status = PipelineStatus.PROCESSING
@@ -125,16 +128,21 @@ class DeterministicPipeline:
                         raise RuntimeError(f"Intervention callback for '{step_name}' is async. Use execute_async().")
                     callback(state)
 
-                # 2. Execute Step
-                print(f"     Executing step: {step_name}...")
                 current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
                 
-                import inspect
                 if inspect.iscoroutinefunction(func):
                     raise RuntimeError(f"Step '{step_name}' is async. Use execute_async().")
                 
                 result = func(current_data)
                 state.results[step_name] = result
+
+                if self.event_bus:
+                    self.event_bus.emit("pipeline:step", {
+                        "pipeline": self.name, 
+                        "task_id": state.task_id,
+                        "step": step_name,
+                        "result": str(result)[:200]
+                    })
                 state.current_step_index += 1
                 state.updated_at = datetime.now()
 
@@ -142,16 +150,17 @@ class DeterministicPipeline:
                 if step_name in self.checkpoints:
                     approval_req = self.checkpoints[step_name]
                     if approval_req:
-                        print(f"     [CHECKPOINT] Awaiting approval after: {step_name}")
+                        if self.event_bus:
+                            self.event_bus.emit("pipeline:checkpoint", {"pipeline": self.name, "task_id": state.task_id, "step": step_name})
                         state.status = PipelineStatus.AWAITING_APPROVAL
                         return state
                     else:
-                        print(f"     [CHECKPOINT] Reached: {step_name} (No approval required)")
                         state.status = PipelineStatus.SUSPENDED
                         return state
             
             state.status = PipelineStatus.COMPLETED
-            print(f"[OK] Pipeline '{self.name}' completed successfully")
+            if self.event_bus:
+                self.event_bus.emit("pipeline:complete", {"pipeline": self.name, "task_id": state.task_id})
             
         except Exception as e:
             state.status = PipelineStatus.ERROR
@@ -164,7 +173,8 @@ class DeterministicPipeline:
     async def execute_async(self, data: Any, task_id: Optional[str] = None) -> PipelineState:
         """Execute all steps in the pipeline asynchronously."""
         t_id = task_id or f"TASK-{len(self.history)+1:04d}"
-        print(f"\n[START] Executing pipeline async: {self.name} (Task: {t_id})")
+        if self.event_bus:
+            self.event_bus.emit("pipeline:start", {"pipeline": self.name, "task_id": t_id, "data": str(data)[:100], "mode": "async"})
         
         state = PipelineState(task_id=t_id, data=data)
         state.status = PipelineStatus.PROCESSING
@@ -203,16 +213,23 @@ class DeterministicPipeline:
                     await self._invoke_callback(callback, state)
 
                 # 2. Execute Step
-                print(f"     Executing step (async): {step_name}...")
-                import inspect
                 current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
                 
+                import inspect
                 if inspect.iscoroutinefunction(func):
                     result = await func(current_data)
                 else:
                     result = func(current_data)
                 
                 state.results[step_name] = result
+
+                if self.event_bus:
+                    self.event_bus.emit("pipeline:step", {
+                        "pipeline": self.name, 
+                        "task_id": state.task_id,
+                        "step": step_name,
+                        "result": str(result)[:200]
+                    })
                 state.current_step_index += 1
                 state.updated_at = datetime.now()
 
@@ -220,16 +237,17 @@ class DeterministicPipeline:
                 if step_name in self.checkpoints:
                     approval_req = self.checkpoints[step_name]
                     if approval_req:
-                        print(f"     [CHECKPOINT] Awaiting approval after: {step_name}")
+                        if self.event_bus:
+                            self.event_bus.emit("pipeline:checkpoint", {"pipeline": self.name, "task_id": state.task_id, "step": step_name})
                         state.status = PipelineStatus.AWAITING_APPROVAL
                         return state
                     else:
-                        print(f"     [CHECKPOINT] Reached: {step_name} (No approval required)")
                         state.status = PipelineStatus.SUSPENDED
                         return state
             
             state.status = PipelineStatus.COMPLETED
-            print(f"[OK] Pipeline '{self.name}' completed successfully")
+            if self.event_bus:
+                self.event_bus.emit("pipeline:complete", {"pipeline": self.name, "task_id": state.task_id})
             
         except Exception as e:
             state.status = PipelineStatus.ERROR

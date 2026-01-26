@@ -6,8 +6,8 @@ class PipelineManager:
         self.logger = logger
         self.pipelines = {}
     
-    def create(self, name: str):
-        pipeline = self.pipeline_class(name)
+    def create(self, name: str, event_bus = None):
+        pipeline = self.pipeline_class(name, event_bus=event_bus)
         self.pipelines[name] = pipeline
         return pipeline
     

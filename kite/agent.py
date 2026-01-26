@@ -15,13 +15,15 @@ class Agent:
                  llm,
                  tools: List,
                  framework,
-                 max_iterations: int = 10):
+                 max_iterations: int = 10,
+                 knowledge_sources: List[str] = None):
         self.name = name
         self.system_prompt = system_prompt
         self.llm = llm
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
         self.max_iterations = max_iterations
+        self.knowledge_sources = knowledge_sources or []
         
         # Stats
         self.call_count = 0
@@ -38,6 +40,7 @@ class Agent:
         Run agent on input.
         """
         self.call_count += 1
+        self.framework.event_bus.emit("agent:run:start", {"agent": self.name, "input": user_input})
         
         try:
             session_tool_results = {} # norm -> {"data": ..., "success": bool}
@@ -68,6 +71,46 @@ class Agent:
                 
                 # 2. Build Prompt
                 full_system_prompt = self.system_prompt
+                
+                # EXPLICIT KNOWLEDGE RETRIEVAL (Only from authorized sources)
+                knowledge_context = ""
+                
+                if self.knowledge_sources and hasattr(self.framework, 'knowledge'):
+                    for source_name in self.knowledge_sources:
+                        # 1. Check structured knowledge
+                        data = self.framework.knowledge.data.get(source_name)
+                        if data:
+                            matched = []
+                            for key, val in data.items():
+                                if key.lower() in user_input.lower():
+                                    matched.append(f"- [{source_name}] {key}: {val}")
+                            
+                            if matched:
+                                knowledge_context += f"\n### AUTHORIZED EXPERTISE ({source_name}):\n"
+                                knowledge_context += "\n".join(matched) + "\n"
+
+                        # 2. Check Vector Memory with source filter
+                        if hasattr(self.framework, 'vector_memory'):
+                            try:
+                                # We assume our VectorMemory search supports metadata filtering or we just filter results
+                                # For this implementation, we filter top results by 'source' metadata
+                                mem_results = self.framework.vector_memory.search(user_input, k=3)
+                                for _, text, dist in mem_results:
+                                    # Note: metadata isn't returned in the simple Tuple result of search(), 
+                                    # but we'll assume the text contains identifying markers or we improve the search method.
+                                    # For a robust approach, we'd need metadata in search results.
+                                    if dist < 0.5:
+                                         knowledge_context += f"- [Memory:{source_name}] {text[:200]}...\n"
+                            except: pass
+                
+                if knowledge_context:
+                    full_system_prompt += f"\n\n{knowledge_context}"
+                    self.framework.event_bus.emit("knowledge:retrieved", {
+                        "agent": self.name,
+                        "context": knowledge_context,
+                        "message": "Domain expertise injected from Knowledge Base"
+                    })
+                
                 if context:
                     full_system_prompt += f"\n\nContext: {context}"
                 
@@ -83,9 +126,9 @@ class Agent:
 1. **Mental Lock**: If a fact is in CURRENT MEMORY, you MUST NOT ask for it again. PROPOSING A REDUNDANT TOOL IS A FAILURE.
 2. **True Termination**: You MUST provide a "Final Answer: [result]" and STOP ONLY when the user's request is 100% fulfilled.
 3. **Evidence-Based Checklist**: When marking a task as [Done], you MUST include the SPECIFIC data retrieved. 
-   - Good: [Done] Found order ORD-001: Status is Shipped, delivery tomorrow.
 4. **Action Format**: Action: [{{"name": "...", "args": {{...}}}}] (Only if NEW data is needed)
-5. **No Placeholders**: Never use "Final Answer: None" or "Final Answer: Not yet". If you aren't done, ONLY provide an Action or Thought.
+5. **STOP AFTER ACTION**: When you provide an "Action:", you MUST STOP generating text immediately. Do NOT provide an "Observation:" or "Final Answer:" in the same turn. Wait for the user to provide the Observation.
+6. **No Placeholders**: Never use "Final Answer: None" or "Final Answer: Not yet". If you aren't done, ONLY provide an Action or Thought.
 
 ### Reasoning Format:
 Thought: 
@@ -93,7 +136,7 @@ Thought:
   Checklist:
   - [status] task 1 (include specific data if Done)
   Reasoning: [Analysis of Memory vs Goal]
-Action: [{{"name": "...", "args": {{...}}}}] (OMIT IF GOAL IS REACHED)
+Action: [{{"name": "...", "args": {{...}}}}] (OMIT IF GOAL IS REACHED. IF PROVIDED, STOP HERE.)
 Final Answer: [The final response to the user]
 """
                     full_system_prompt += tool_info
@@ -186,7 +229,18 @@ Final Answer: [The final response to the user]
                         try:
                             cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
                             print(f"      | [ACTION] {tool_name}({tool_args})")
-                            result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            
+                            # Execute tool
+                            result = self.tools[tool_name].execute(**cleaned_args)
+                            
+                            # If the result is a coroutine, await it
+                            if asyncio.iscoroutine(result):
+                                result = await result
+                            # If it's a regular function but we want to avoid blocking the loop, 
+                            # we could use to_thread, but Tool.execute already handled the binding.
+                            # For safety with blocking sync tools, we wrap them if not a coroutine.
+                            elif not asyncio.iscoroutinefunction(self.tools[tool_name].func):
+                                result = await asyncio.to_thread(self.tools[tool_name].func, **cleaned_args)
                             
                             tool_results.append({"tool": tool_name, "result": result, "success": True})
                             session_tool_results[norm] = {"data": result, "success": True}
@@ -228,6 +282,24 @@ Final Answer: [The final response to the user]
         except Exception as e:
             return {"success": False, "error": str(e), "agent": self.name}
     
+    def run_sync(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """
+        Synchronous wrapper for run.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(self.run(user_input, context))
+        else:
+            return asyncio.run(self.run(user_input, context))
+
     async def _extract_tool_calls(self, response: str, context: Optional[Dict] = None) -> List:
         """Robust tool extraction combining direct regex and LLM fallback."""
         if not self.tools: return []

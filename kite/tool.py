@@ -4,6 +4,7 @@ Wrap any function as a tool for agents.
 """
 
 from typing import Callable, Dict, Any
+import asyncio
 
 
 class Tool:
@@ -77,6 +78,9 @@ class Tool:
                         casted_args[param_name] = value
                 else:
                     casted_args[param_name] = value
+            
+            if asyncio.iscoroutinefunction(self.func):
+                return self.func(**casted_args)
             
             result = self.func(**casted_args)
             return result
