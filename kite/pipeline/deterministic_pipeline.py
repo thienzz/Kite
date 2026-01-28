@@ -89,6 +89,11 @@ class DeterministicPipeline:
         t_id = task_id or f"TASK-{len(self.history)+1:04d}"
         if self.event_bus:
             self.event_bus.emit("pipeline:start", {"pipeline": self.name, "task_id": t_id, "data": str(data)[:100]})
+            self.event_bus.emit("pipeline:structure", {
+                "pipeline": self.name,
+                "task_id": t_id,
+                "steps": [name for name, _ in self.steps]
+            })
         
         state = PipelineState(task_id=t_id, data=data)
         state.status = PipelineStatus.PROCESSING
@@ -130,7 +135,13 @@ class DeterministicPipeline:
 
                 current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
                 
-                if inspect.iscoroutinefunction(func):
+                if self.event_bus:
+                    self.event_bus.emit("pipeline:step_start", {
+                        "pipeline": self.name,
+                        "task_id": state.task_id,
+                        "step": step_name,
+                        "index": step_idx
+                    })
                     raise RuntimeError(f"Step '{step_name}' is async. Use execute_async().")
                 
                 result = func(current_data)
@@ -175,6 +186,11 @@ class DeterministicPipeline:
         t_id = task_id or f"TASK-{len(self.history)+1:04d}"
         if self.event_bus:
             self.event_bus.emit("pipeline:start", {"pipeline": self.name, "task_id": t_id, "data": str(data)[:100], "mode": "async"})
+            self.event_bus.emit("pipeline:structure", {
+                "pipeline": self.name,
+                "task_id": t_id,
+                "steps": [name for name, _ in self.steps]
+            })
         
         state = PipelineState(task_id=t_id, data=data)
         state.status = PipelineStatus.PROCESSING
@@ -215,11 +231,39 @@ class DeterministicPipeline:
                 # 2. Execute Step
                 current_data = state.results[self.steps[step_idx-1][0]] if step_idx > 0 else state.data
                 
+                # Create context for the step (useful for agents)
+                step_context = {
+                    "task_id": state.task_id,
+                    "pipeline": self.name,
+                    "step": step_name,
+                    "index": step_idx
+                }
+                
+                if self.event_bus:
+                    self.event_bus.emit("pipeline:step_start", {
+                        "pipeline": self.name,
+                        "task_id": state.task_id,
+                        "step": step_name,
+                        "index": step_idx
+                    })
+                
                 import inspect
+                # We need to decide how to pass context. Many steps in the scraper take only one arg.
+                # If it's an agent.run, we can pass context as a second arg.
+                # For now, let's just emit and assume the agent might pick it up if we change how we call it in the scraper,
+                # OR we can try to inject it if the function signature allows.
+                
                 if inspect.iscoroutinefunction(func):
-                    result = await func(current_data)
+                    # Try to pass context if it's an agent-like run
+                    try:
+                        result = await func(current_data, context=step_context)
+                    except TypeError:
+                        result = await func(current_data)
                 else:
-                    result = func(current_data)
+                    try:
+                        result = func(current_data, context=step_context)
+                    except TypeError:
+                        result = func(current_data)
                 
                 state.results[step_name] = result
 

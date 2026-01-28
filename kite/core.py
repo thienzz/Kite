@@ -9,6 +9,7 @@ import json
 from typing import Dict, Optional, Any, Callable, List
 from datetime import datetime
 from .data_loaders import DocumentLoader
+from .monitoring import get_metrics, get_tracer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,6 +150,10 @@ class Kite:
         self._advanced_rag = None
         self._cache = None
         self._db_mcp = None
+        
+        # Monitoring & Observability
+        self.metrics = get_metrics()
+        self.tracer = get_tracer()
         
         # New Event System for Pub/Sub monitoring
         self.event_bus = EventBus()
@@ -582,8 +587,13 @@ class Kite:
         return tool
     
     def create_workflow(self, name: str):
-        """Create workflow."""
+        """Create a deterministic workflow."""
         return self.pipeline.create(name, event_bus=self.event_bus)
+    
+    def create_reactive_workflow(self, name: str):
+        """Create a reactive, streaming workflow."""
+        from .pipeline import ReactivePipeline
+        return ReactivePipeline(name, event_bus=self.event_bus)
     
     def create_conversation(self, 
                             agents: List["Agent"], 
@@ -644,12 +654,19 @@ class Kite:
             return asyncio.run(self.process(tasks))
 
     def get_metrics(self) -> Dict:
-        return {
+        base_metrics = {
             'circuit_breaker': getattr(self.circuit_breaker, 'get_stats', lambda: {})(),
             'idempotency': getattr(self.idempotency, 'get_metrics', lambda: {})(),
             'vector_memory': getattr(self.vector_memory, 'get_metrics', lambda: {})(),
             'session_memory': getattr(self.session_memory, 'get_metrics', lambda: {})(),
         }
+        # Merge with global metrics collector data
+        base_metrics.update(self.metrics.get_metrics())
+        return base_metrics
+
+    def print_summary(self):
+        """Print the detailed framework summary report."""
+        print(self.metrics.get_detailed_report())
 
     def enable_verbose_monitoring(self):
         """Enable standardized console feedback for all events."""
@@ -662,7 +679,9 @@ class Kite:
                 print(f"   [{agent}] Action: {data.get('tool')}({data.get('args', {})})")
             elif "observation" in event:
                 obs = str(data.get('observation', ''))
-                print(f"   [{agent}] Observation: {obs[:100]}...")
+                print(f"   [{agent}] Observation: {obs[:500]}..." if len(obs) > 500 else f"   [{agent}] Observation: {obs}")
+            elif "tool:log" in event:
+                print(f"   [{agent}] Tool Debug: {data.get('message', '')}")
             elif "complete" in event:
                 print(f"   [{agent}] Task Completed.")
             elif "error" in event:

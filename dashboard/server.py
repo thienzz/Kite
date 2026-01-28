@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import json
 import asyncio
@@ -8,6 +9,15 @@ from typing import List, Dict
 from datetime import datetime
 
 app = FastAPI(title="Kite Monitoring Dashboard")
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Storage for live events
 events_log: List[Dict] = []
@@ -46,7 +56,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
-    with open("dashboard/index.html", "r") as f:
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    index_path = os.path.join(current_dir, "index.html")
+    with open(index_path, "r") as f:
         return f.read()
 
 if __name__ == "__main__":

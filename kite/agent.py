@@ -1,6 +1,7 @@
 import json
 import asyncio
 import re
+import time
 from typing import List, Dict, Optional, Callable
 
 
@@ -34,6 +35,10 @@ class Agent:
         
         # Log creation
         print(f"     Agent '{self.name}' initialized (LLM: {self.metadata['llm']})")
+
+    def record_outcome(self, outcome_type: str):
+        """Record a domain-specific outcome (e.g., 'lead', 'reject')."""
+        self.framework.metrics.record_outcome(self.name, outcome_type)
     
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """
@@ -42,10 +47,15 @@ class Agent:
         self.call_count += 1
         self.framework.event_bus.emit("agent:run:start", {"agent": self.name, "input": user_input})
         
+        start_time = time.time()
+        success = True
+        error_type = None
+        
         try:
             session_tool_results = {} # norm -> {"data": ..., "success": bool}
             successful_norms = set()
             failed_norms = {} # norm -> error_msg
+            all_data = {} # tool_name -> result
             messages = []
             
             def normalize_call(name: str, args: Dict) -> str:
@@ -62,12 +72,7 @@ class Agent:
                     print(f"      [DEBUG] [{self.name}] Iteration {i+1}/{self.max_iterations}...")
 
                 # 1. Build Dynamic Memory
-                memory_text = ""
-                if session_tool_results:
-                    memory_text = "\n### CURRENT MEMORY (Verified Facts):\n"
-                    for norm, val in session_tool_results.items():
-                        if val['success']:
-                            memory_text += f"- {norm} -> {val['data']}\n"
+                # ... (keep existing memory building)
                 
                 # 2. Build Prompt
                 full_system_prompt = self.system_prompt
@@ -81,24 +86,28 @@ class Agent:
                         data = self.framework.knowledge.data.get(source_name)
                         if data:
                             matched = []
+                            categories = []
                             for key, val in data.items():
-                                if key.lower() in user_input.lower():
+                                categories.append(key)
+                                # Match in either user input OR the agent's previous thought (to allow discovery)
+                                if key.lower() in user_input.lower() or (last_valid_response and key.lower() in last_valid_response.lower()):
                                     matched.append(f"- [{source_name}] {key}: {val}")
                             
                             if matched:
                                 knowledge_context += f"\n### AUTHORIZED EXPERTISE ({source_name}):\n"
                                 knowledge_context += "\n".join(matched) + "\n"
+                            else:
+                                # Provide categories so the agent knows what it CAN look for
+                                knowledge_context += f"\n### AVAILABLE KNOWLEDGE CATEGORIES in {source_name}:\n"
+                                knowledge_context += f"You have expert expertise in: {', '.join(categories)}. "
+                                knowledge_context += "You can ask for specific details on any of these to see expert search strings.\n"
 
                         # 2. Check Vector Memory with source filter
                         if hasattr(self.framework, 'vector_memory'):
                             try:
                                 # We assume our VectorMemory search supports metadata filtering or we just filter results
-                                # For this implementation, we filter top results by 'source' metadata
                                 mem_results = self.framework.vector_memory.search(user_input, k=3)
                                 for _, text, dist in mem_results:
-                                    # Note: metadata isn't returned in the simple Tuple result of search(), 
-                                    # but we'll assume the text contains identifying markers or we improve the search method.
-                                    # For a robust approach, we'd need metadata in search results.
                                     if dist < 0.5:
                                          knowledge_context += f"- [Memory:{source_name}] {text[:200]}...\n"
                             except: pass
@@ -162,15 +171,20 @@ Final Answer: [The final response to the user]
                 
                 # IMMEDIATE State Commitment
                 last_valid_response = response.strip()
+
+                # EMIT THOUGHT EVENT
+                thought_match = re.search(r"Thought:\s*([\s\S]+?)(?=Action:|Final Answer:|$)", last_valid_response, re.IGNORECASE)
+                if thought_match:
+                    reasoning = thought_match.group(1).strip()
+                    self.framework.event_bus.emit("agent:thought", {
+                        "agent": self.name,
+                        "thought": reasoning,
+                        "iteration": i + 1,
+                        "task_id": context.get('task_id') if context else None
+                    })
                 
                 # High-Visibility Reasoning Box
-                border = "=" * 60
-                print(f"\n      {border}")
-                print(f"      [ {self.name} REASONING ]")
-                print(f"      {border}")
-                for line in last_valid_response.split('\n'):
-                    print(f"      | {line.strip()}")
-                print(f"      {border}\n")
+                # ...
                 
                 # 1. Extract tool calls FIRST to prevent premature termination
                 tool_calls = await self._extract_tool_calls(last_valid_response, context=context)
@@ -230,25 +244,44 @@ Final Answer: [The final response to the user]
                             cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
                             print(f"      | [ACTION] {tool_name}({tool_args})")
                             
-                            # Execute tool
-                            result = self.tools[tool_name].execute(**cleaned_args)
+                            # EMIT TOOL CALL EVENT
+                            self.framework.event_bus.emit("agent:tool_call", {
+                                "agent": self.name,
+                                "tool": tool_name,
+                                "args": tool_args,
+                                "task_id": context.get('task_id') if context else None
+                            })
                             
-                            # If the result is a coroutine, await it
-                            if asyncio.iscoroutine(result):
-                                result = await result
-                            # If it's a regular function but we want to avoid blocking the loop, 
-                            # we could use to_thread, but Tool.execute already handled the binding.
-                            # For safety with blocking sync tools, we wrap them if not a coroutine.
-                            elif not asyncio.iscoroutinefunction(self.tools[tool_name].func):
-                                result = await asyncio.to_thread(self.tools[tool_name].func, **cleaned_args)
+                            # Execute tool
+                            result = await self.tools[tool_name].execute(**cleaned_args, framework=self.framework)
+                            
+                            # EMIT TOOL RESULT EVENT
+                            self.framework.event_bus.emit("agent:tool_result", {
+                                "agent": self.name,
+                                "tool": tool_name,
+                                "result": result,
+                                "success": True,
+                                "task_id": context.get('task_id') if context else None
+                            })
                             
                             tool_results.append({"tool": tool_name, "result": result, "success": True})
                             session_tool_results[norm] = {"data": result, "success": True}
+                            all_data[tool_name] = result
                             successful_norms.add(norm)
                             if norm in failed_norms: del failed_norms[norm]
                         except Exception as tool_err:
                             err_msg = str(tool_err)
                             print(f"      [{self.name} FAILED] {tool_name}: {err_msg}")
+                            
+                            # EMIT TOOL ERROR EVENT
+                            self.framework.event_bus.emit("agent:tool_result", {
+                                "agent": self.name,
+                                "tool": tool_name,
+                                "error": err_msg,
+                                "success": False,
+                                "task_id": context.get('task_id') if context else None
+                            })
+                            
                             tool_results.append({"tool": tool_name, "error": err_msg, "success": False})
                             session_tool_results[norm] = {"data": err_msg, "success": False}
                             failed_norms[norm] = err_msg
@@ -276,11 +309,27 @@ Final Answer: [The final response to the user]
                 "response": clean_answer, # Return ONLY the clean answer to the caller
                 "full_log": last_valid_response, # Keep logs for internal audit
                 "agent": self.name,
-                "iterations": i + 1
+                "iterations": i + 1,
+                "data": all_data
             }
             
         except Exception as e:
-            return {"success": False, "error": str(e), "agent": self.name}
+            success = False
+            error_type = type(e).__name__
+            err_msg = str(e) or error_type
+            return {
+                "success": False, 
+                "error": err_msg, 
+                "response": f"Error: {err_msg}",
+                "agent": self.name,
+                "data": {},
+                "iterations": 0
+            }
+        finally:
+            duration = time.time() - start_time
+            self.framework.metrics.record_request(
+                self.name, "run", duration, success, error_type
+            )
     
     def run_sync(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """

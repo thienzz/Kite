@@ -5,9 +5,11 @@ Complete production monitoring with metrics, tracing, and alerting.
 
 import time
 import logging
-from typing import Dict, Any, Optional, Callable
+import threading
+from datetime import datetime
+from typing import Dict, Any, Optional, Callable, List
 from functools import wraps
-from collections import defaultdict
+from collections import defaultdict, deque
 import threading
 
 try:
@@ -41,14 +43,15 @@ class MetricsCollector:
             'errors': 0,
             'total_latency': 0,
             'min_latency': float('inf'),
-            'max_latency': 0
+            'max_latency': 0,
+            'outcomes': defaultdict(int)
         })
         
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
         # History for Dashboard
-        self.request_history = []
-        self.error_logs = []
+        self.request_history = deque(maxlen=1000)
+        self.error_logs = deque(maxlen=1000)
         self.max_history = 1000
         
         # Prometheus metrics
@@ -123,23 +126,35 @@ class MetricsCollector:
     def record_request(self, component: str, operation: str, 
                       latency: float, success: bool = True,
                       error_type: Optional[str] = None):
-        """Record a request with metrics."""
+        """Record a component request with timing and status."""
         key = f"{component}.{operation}"
-        
         with self.lock:
-            self.metrics[key]['count'] += 1
-            self.metrics[key]['total_latency'] += latency
-            self.metrics[key]['min_latency'] = min(
-                self.metrics[key]['min_latency'], 
-                latency
-            )
-            self.metrics[key]['max_latency'] = max(
-                self.metrics[key]['max_latency'],
-                latency
-            )
+            # Update metrics
+            data = self.metrics[key]
+            data['count'] += 1
+            data['total_latency'] += latency
+            data['min_latency'] = min(data['min_latency'], latency)
+            data['max_latency'] = max(data['max_latency'], latency)
             
             if not success:
-                self.metrics[key]['errors'] += 1
+                data['errors'] += 1
+            
+            # Update history
+            self.request_history.append({
+                'timestamp': datetime.now(),
+                'component': component,
+                'operation': operation,
+                'latency': latency,
+                'success': success,
+                'error_type': error_type
+            })
+            
+            if not success and error_type:
+                self.error_logs.append({
+                    'timestamp': datetime.now(),
+                    'component': component,
+                    'error': error_type
+                })
         
         # History
         with self.lock:
@@ -182,6 +197,11 @@ class MetricsCollector:
                     operation=operation,
                     error_type=error_type or 'unknown'
                 ).inc()
+
+    def record_outcome(self, component: str, outcome_type: str):
+        """Record a domain-specific outcome for a component."""
+        with self.lock:
+            self.metrics[component]['outcomes'][outcome_type] += 1
     
     def record_llm_usage(self, provider: str, model: str,
                         prompt_tokens: int, completion_tokens: int,
@@ -245,8 +265,17 @@ class MetricsCollector:
     def get_summary(self) -> Dict:
         """Get high-level system summary."""
         history = self.get_history()
+        total_requests = len(self.request_history)
+        total_errors = len(self.error_logs)
+        
         if not history:
-            return {"status": "idle"}
+            return {
+                "status": "idle",
+                "success_rate": 1.0,
+                "avg_latency": 0.0,
+                "total_requests": total_requests,
+                "total_errors": total_errors
+            }
             
         recent = history[-100:]
         success_rate = sum(1 for r in recent if r['success']) / len(recent) if recent else 0
@@ -256,9 +285,40 @@ class MetricsCollector:
             "status": "healthy" if success_rate > 0.9 else "degraded",
             "success_rate": success_rate,
             "avg_latency": avg_latency,
-            "total_requests": len(self.request_history),
-            "total_errors": len(self.error_logs)
+            "total_requests": total_requests,
+            "total_errors": total_errors
         }
+
+    def get_detailed_report(self) -> str:
+        """Generate a human-readable detailed report of all metrics."""
+        with self.lock:
+            if not self.metrics:
+                return "No metrics recorded."
+            
+            report = []
+            report.append("\n" + "="*60)
+            report.append("  📊 KITE SYSTEM PERFORMANCE REPORT")
+            report.append("="*60)
+            
+            # 1. Summary Metrics
+            summary = self.get_summary()
+            report.append(f"Status: {summary['status'].upper()}")
+            report.append(f"Total Calls: {summary['total_requests']}")
+            report.append(f"Success Rate: {summary['success_rate']:.1%}")
+            # report.append(f"Avg Latency: {summary['avg_latency']:.3f}s")
+            report.append("-" * 60)
+            
+            # 2. Per-Component breakdown
+            report.append(f"{'Component':<20} | {'Calls':<6} | {'Errors':<6} | {'Avg Latency':<10} | {'Outcomes'}")
+            report.append("-" * 60)
+            
+            for key, data in sorted(self.metrics.items()):
+                avg_l = data['total_latency'] / data['count'] if data['count'] > 0 else 0
+                outcomes_str = ", ".join([f"{k}:{v}" for k, v in data['outcomes'].items()])
+                report.append(f"{key:<20} | {data['count']:<6} | {data['errors']:<6} | {avg_l:<10.3f}s | {outcomes_str}")
+            
+            report.append("="*60 + "\n")
+            return "\n".join(report)
 
 
 class Tracer:
