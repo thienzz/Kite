@@ -34,56 +34,62 @@ class Tool:
         self.call_count = 0
         self.error_count = 0
     
-    def execute(self, *args, **kwargs) -> Any:
+    async def execute(self, *args, **kwargs) -> Any:
         """Execute tool."""
         self.call_count += 1
         
         try:
+            # General Monitoring: Emit tool start
+            if kwargs.get('framework'):
+                kwargs['framework'].event_bus.emit("tool:start", {
+                    "tool": self.name,
+                    "args": kwargs.get('args', args) # Best effort capture
+                })
+
             # Perform basic type casting based on signature
             import inspect
             sig = inspect.signature(self.func)
             bound_args = sig.bind_partial(*args, **kwargs)
             
+            # ... process casted_args ...
             casted_args = {}
+            # (Rest of casting logic remains same)
             for param_name, value in bound_args.arguments.items():
                 param = sig.parameters.get(param_name)
                 if param and param.annotation != inspect.Parameter.empty:
-                    # Basic casting for common types
                     try:
                         annotation = param.annotation
-                        if annotation == str:
-                            casted_args[param_name] = str(value)
-                        elif annotation == float:
-                            if isinstance(value, str):
-                                # Clean currency symbols and commas
-                                clean_val = value.replace('$', '').replace(',', '').strip()
-                                casted_args[param_name] = float(clean_val)
-                            else:
-                                casted_args[param_name] = float(value)
-                        elif annotation == int:
-                            if isinstance(value, str):
-                                # Clean currency symbols and commas
-                                clean_val = value.replace('$', '').replace(',', '').split('.')[0].strip()
-                                casted_args[param_name] = int(clean_val)
-                            else:
-                                casted_args[param_name] = int(value)
-                        elif annotation == bool:
-                            if isinstance(value, str):
-                                casted_args[param_name] = value.lower() in ("true", "1", "yes", "on")
-                            else:
-                                casted_args[param_name] = bool(value)
-                        else:
-                            casted_args[param_name] = value
-                    except:
-                        casted_args[param_name] = value
+                        if annotation == str: casted_args[param_name] = str(value)
+                        elif annotation == float: casted_args[param_name] = float(str(value).replace('$', '').replace(',', '').strip())
+                        elif annotation == int: casted_args[param_name] = int(str(value).replace('$', '').replace(',', '').split('.')[0].strip())
+                        elif annotation == bool: casted_args[param_name] = str(value).lower() in ("true", "1", "yes", "on")
+                        else: casted_args[param_name] = value
+                    except: casted_args[param_name] = value
                 else:
                     casted_args[param_name] = value
+
+            # Inject framework if it's in kwargs but not in signature, or if signature has **kwargs
+            if 'framework' not in casted_args and 'framework' not in sig.parameters:
+                if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    casted_args['framework'] = kwargs.get('framework')
             
             if asyncio.iscoroutinefunction(self.func):
-                return self.func(**casted_args)
+                result = await self.func(**casted_args)
+            else:
+                # Regular sync function
+                result = await asyncio.to_thread(self.func, **casted_args)
+
+            # General Monitoring: Emit tool end
+            if kwargs.get('framework'):
+                kwargs['framework'].event_bus.emit("tool:end", {
+                    "tool": self.name,
+                    "status": "success"
+                })
             
-            result = self.func(**casted_args)
             return result
+        except Exception as e:
+            self.error_count += 1
+            raise
         except Exception as e:
             self.error_count += 1
             raise

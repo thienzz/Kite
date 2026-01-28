@@ -23,11 +23,11 @@ class ReActAgent(Agent):
                  llm,
                  tools: List,
                  framework,
-                 max_iterations: int = 10,
+                 max_iterations: int = 15,
                  kill_switch: Optional[KillSwitch] = None,
                  knowledge_sources: List[str] = None):
         super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations, knowledge_sources=knowledge_sources)
-        self.kill_switch = kill_switch or KillSwitch()
+        self.kill_switch = kill_switch or KillSwitch(max_time=600, max_iterations=15)
         
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """Override base run to use autonomous logic."""
@@ -47,7 +47,8 @@ class ReActAgent(Agent):
             'start_time': time.time(),
             'completed': False,
             'final_answer': None,
-            'context': context or {}
+            'context': context or {},
+            'data': {} # Map of tool_name -> result
         }
         
         print(f"\n[{self.name}] Starting advanced autonomous loop for: {goal}")
@@ -65,7 +66,23 @@ class ReActAgent(Agent):
                 self.framework.event_bus.emit("agent:error", {"agent": self.name, "error": "Max iterations reached"})
                 break
 
-            self.framework.event_bus.emit("agent:step", {"agent": self.name, "step": state['steps']})
+            # 1b. Check for repetitive failures
+            if len(state['history']) >= 3:
+                last_three = state['history'][-3:]
+                actions = [h['action'].get('tool') for h in last_three]
+                status = [h['action'].get('status') for h in last_three]
+                if len(set(actions)) == 1 and all(s != 'success' for s in status):
+                    print(f"   [{self.name}] Detected loop on failed action '{actions[0]}'. Terminating.")
+                    state['completed'] = False
+                    state['final_answer'] = f"Loop detected on failed action: {actions[0]}"
+                    break
+
+            self.framework.event_bus.emit("agent:step", {
+                "agent": self.name, 
+                "step": state['steps'],
+                "goal": state['goal'],
+                "summary": state['history'][-1]['reasoning'] if state['history'] else "Starting task..."
+            })
             
             # 2. THINK & PLAN (Structured Extraction)
             print(f"[{self.name}] Reflecting and deciding next action...")
@@ -87,6 +104,7 @@ class ReActAgent(Agent):
                     "reasoning": reasoning,
                     "confidence": confidence
                 })
+                print(f"   [{self.name}] Thinking: {reasoning}")
                 
                 if is_final:
                     state['completed'] = True
@@ -99,22 +117,22 @@ class ReActAgent(Agent):
                 
                 # 3. ACT
                 if not action_name or action_name not in self.tools:
-                    observation = f"Error: Tool '{action_name}' not found. Please choose from: {list(self.tools.keys())} or signal is_final: true."
-                    action_record = {'tool': action_name, 'args': action_args, 'status': 'failed'}
+                    if is_final:
+                        observation = "Goal marked as complete."
+                        action_record = {'tool': 'None', 'args': {}, 'status': 'success'}
+                    else:
+                        observation = f"Error: Tool '{action_name}' not found. Please choose from: {list(self.tools.keys())} or signal is_final: true."
+                        action_record = {'tool': action_name, 'args': action_args, 'status': 'failed'}
                 else:
                     self.framework.event_bus.emit("agent:action", {
                         "agent": self.name,
                         "tool": action_name,
                         "args": action_args
                     })
+                    print(f"   [{self.name}] Action: {action_name}({action_args})")
                     try:
-                        # Correct async-safe execution (Re-using Agent logic here)
-                        result = self.tools[action_name].execute(**action_args)
-                        if asyncio.iscoroutine(result):
-                            result = await result
-                        elif not asyncio.iscoroutinefunction(self.tools[action_name].func):
-                            # Use thread for blocking sync tools
-                            result = await asyncio.to_thread(self.tools[action_name].func, **action_args)
+                        # Correct async-safe execution
+                        result = await self.tools[action_name].execute(**action_args, framework=self.framework)
                         
                         observation = self._format_observation(result)
                         action_record = {'tool': action_name, 'args': action_args, 'status': 'success'}
@@ -127,8 +145,13 @@ class ReActAgent(Agent):
                 
                 # Handling for Drifting / Missing Tools
                 if not action_name and not is_final:
-                    observation = "Error: You provided reasoning but NO tool names. Choose from: search_linkedin, or signal is_final: true."
+                    available_tools = list(self.tools.keys())
+                    observation = f"Error: You provided reasoning but NO tool names. Choose from: {available_tools}, or signal is_final: true."
                     action_record = {'tool': 'None', 'args': {}, 'status': 'failed'}
+                
+                # Console Visibility for Observations
+                obs_preview = observation[:200].replace('\n', ' ') + "..." if len(observation) > 200 else observation
+                print(f"   [{self.name}] Observation: {obs_preview}")
                 
                 # 4. RECORD
                 state['history'].append({
@@ -138,17 +161,22 @@ class ReActAgent(Agent):
                     'observation': observation,
                     'confidence': confidence
                 })
+                # EMIT FULL OBSERVATION FOR DASHBOARD
                 self.framework.event_bus.emit("agent:observation", {
                     "agent": self.name,
-                    "observation": observation
+                    "observation": observation,
+                    "full_data": result if action_record['status'] == 'success' else None
                 })
                 
                 # Dynamic Fact Extraction
                 if action_record['status'] == 'success':
                     state['confirmed_facts'].append(f"Result of {action_name}: {observation}")
+                    state['data'][action_name] = result
                 
             except Exception as e:
-                print(f"[{self.name}] Error in loop: {e}")
+                import traceback
+                print(f"[{self.name}] Error in loop: {str(e)}")
+                # traceback.print_exc() # Keep it quiet but logged for now
                 observation = f"Internal Error: {str(e)}"
                 state['history'].append({
                     'step': state['steps'], 
@@ -164,7 +192,8 @@ class ReActAgent(Agent):
             "goal": goal,
             "steps": state['steps'],
             "history": state['history'],
-            "agent": self.name
+            "agent": self.name,
+            "data": state['data']
         }
     
     def _build_structured_prompt(self, state: Dict) -> str:
@@ -182,8 +211,8 @@ class ReActAgent(Agent):
                 history_text += f"\n[Step {h['step']}] Action: {h['action'].get('tool')} -> Output Summary: {obs_summary}\n"
 
         return f"""
-# SYSTEM ROLE: Elite Business Specialist
-You are an autonomous agent driven by a SINGLE, UNCHANGING MISSION.
+# PERSONA & CONTEXT
+{self.system_prompt}
 
 ## 🎯 THE MISSION (UNALTERABLE)
 Goal: {state['goal']}
@@ -201,6 +230,7 @@ Goal: {state['goal']}
 4. **ANTI-HALLUCINATION GUARD**: 
    - NEVER invent names like 'John Doe' or 'Jane Smith' if no leads are found.
    - NEVER invent profile or post links. If not found, report 'N/A'.
+   - NEVER use names from the Observation (like people's names or 'Unknown') as tool names.
    - If a tool returns `[]`, YOU MUST acknowledge 'No leads found' instead of inventing them.
    - If results are missing, suggest a better search query instead of finishing with fake data.
 
@@ -209,11 +239,11 @@ Available Tools:
 
 ### Strict JSON Output
 {{
-  "reasoning": "Specifically analyze why the previous observations ARE or ARE NOT leads.",
+  "reasoning": "Specifically analyze what was found and what is missing.",
   "tool": "tool_name",
-  "arguments": {{"query": "Boolean string"}},
+  "arguments": {{"param_name": "value"}},
   "is_final": false,
-  "answer": "Only if goal is 100% reached."
+  "answer": "Final report string (only if is_final is true)"
 }}
 """
 
@@ -224,9 +254,32 @@ Available Tools:
         import asyncio
         return await asyncio.to_thread(self.llm.complete, prompt, temperature=0.1, stop=stop_tokens)
 
+    def _clean_json(self, s: str) -> str:
+        """Handle common LLM JSON formatting errors."""
+        import re
+        # Remove markdown code blocks
+        s = re.sub(r'```json\s*(.*?)\s*```', r'\1', s, flags=re.DOTALL)
+        s = re.sub(r'```\s*(.*?)\s*```', r'\1', s, flags=re.DOTALL)
+        
+        # Balance braces if truncated
+        open_braces = s.count('{')
+        close_braces = s.count('}')
+        if open_braces > close_braces:
+            s += '}' * (open_braces - close_braces)
+            
+        # Fix single quotes to double quotes for keys/values
+        # This is risky but helpful for some models
+        # s = re.sub(r"'(.*?)'", r'"\1"', s) 
+        
+        # Remove trailing commas before closing braces/brackets
+        s = re.sub(r',\s*\}', '}', s)
+        s = re.sub(r',\s*\]', ']', s)
+        
+        return s.strip()
+
     def _parse_structured_output(self, response: str) -> Dict:
         try:
-            clean_res = response.strip()
+            clean_res = self._clean_json(response)
             # Find the FIRST '{' and the LAST '}' to extract potential JSON block
             start_idx = clean_res.find('{')
             if start_idx == -1:
@@ -258,7 +311,11 @@ Available Tools:
             # Fallback A: Try regex finding the first {...} block
             try:
                 import re
-                match = re.search(r'\{.*\}', response, re.DOTALL)
+                # Pre-clean the response to handle unescaped newlines within JSON strings
+                # This is a common issue with smaller LLMs
+                fixed_response = re.sub(r'(?<=: ")(.*?)(?=",)', lambda m: m.group(1).replace('\n', ' '), response, flags=re.DOTALL)
+                
+                match = re.search(r'\{.*\}', fixed_response, re.DOTALL)
                 if match:
                     json_str = match.group()
                     # Fix truncated JSON if possible
@@ -268,7 +325,7 @@ Available Tools:
             except: pass
             
             print(f"[{self.name}] JSON Parse Error: {e}")
-            return {"reasoning": f"Parse Error: {str(e)}", "is_final": False}
+            return {"reasoning": f"Parse Error: {str(e)}. Try to strictly follow the JSON output format.", "is_final": False}
 
     def _get_native_knowledge(self, goal: str) -> str:
         """Fetch relevant expert templates from framework knowledge."""
@@ -289,10 +346,8 @@ Available Tools:
 
     def _format_observation(self, result: Any) -> str:
         if isinstance(result, (dict, list)):
-            return json.dumps(result)
-        return str(result)
-
-    def _format_observation(self, result: Any) -> str:
-        if isinstance(result, (dict, list)):
-            return json.dumps(result)
+            try:
+                return json.dumps(result, indent=2)
+            except:
+                return str(result)
         return str(result)

@@ -41,9 +41,9 @@ class ToolRegistry:
             ("web_search", web_search, "Search the web for information"),
             ("calculator", calculator, "Evaluate mathematical expressions"),
             ("get_datetime", get_current_datetime, "Get current date and time"),
-            ("search_linkedin", search_linkedin_posts, "Search for LinkedIn posts"),
-            ("get_profile", get_linkedin_profile_details, "Get detailed profile information"),
-            ("get_company", get_linkedin_company_details, "Get detailed company information"),
+            ("search_linkedin", search_linkedin_posts, "Search for LinkedIn posts. REQUIRED: 'query'. Use 'limit' parameter (default 30) for depth."),
+            ("get_profile", get_linkedin_profile_details, "Get detailed profile information. REQUIRED: 'profile_url'."),
+            ("get_company", get_linkedin_company_details, "Get detailed company information. REQUIRED: 'company_url'."),
             ("create_session", create_linkedin_session, "Create a LinkedIn session by logging in manually")
         ]
         
