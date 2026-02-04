@@ -114,7 +114,7 @@ async def main():
         
         Capabilities:
         1. 'query_sql': To fetch data frame from database.
-        2. 'python_repl': To process data, calculate stats, or create ASCII charts.
+        2. 'python': To process data, calculate stats, or create ASCII charts.
         
         Process:
         1. Explore data using SQL.
@@ -123,6 +123,10 @@ async def main():
         
         Visualization:
         If you make a plot, save it as 'sales_chart.png' using matplotlib.
+        
+        CRITICAL: When using 'python', the 'code' argument MUST be a single valid JSON string. Escape newlines as \\n and quotes as \\".
+        Example: {"code": "print('hello')\\nx=5"}
+        Do NOT write raw code across multiple lines in the JSON arguments.
         """,
         verbose=True
     )
