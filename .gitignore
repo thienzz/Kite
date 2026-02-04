@@ -61,4 +61,28 @@ analytics_demo.db
 # Documentation builds
 docs/_build/
 site/
+<<<<<<< HEAD
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
+data/raw/
+data/processed/
+experiments/
+checkpoints/
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# Backup files
+*.bak
+*~
+/vector_db
+/knowledge
+=======
 vector_db/
+>>>>>>> origin/main

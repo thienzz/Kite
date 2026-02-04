@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kite AI | Advanced Observability</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script>
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            securityLevel: 'loose',
+            flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+        });
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: #f8fafc;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .glass {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 10px;
+        }
+
+        .active-step {
+            filter: drop-shadow(0 0 8px #3b82f6);
+        }
+
+        .thought-bubble {
+            box-shadow: inset 0 0 15px rgba(99, 102, 241, 0.1);
+        }
+
+        .trace-thread-line {
+            position: relative;
+        }
+
+        .trace-thread-line::before {
+            content: '';
+            position: absolute;
+            left: -13px;
+            top: 20px;
+            bottom: 10px;
+            width: 2px;
+            background: linear-gradient(to bottom, #1e293b, transparent);
+            border-radius: 2px;
+        }
+
+        @keyframes pulse-soft {
+
+            0%,
+            100% {
+                opacity: 0.8;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        .animate-pulse-soft {
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-in {
+            animation: fade-in 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+
+<body class="p-4 lg:p-8">
+    <div class="max-w-[1600px] mx-auto">
+        <!-- Header -->
+        <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold tracking-tight flex items-center gap-3">
+                    <span class="bg-gradient-to-r from-blue-500 to-indigo-500 bg-clip-text text-transparent">Kite
+                        AI</span>
+                    <span class="text-slate-500 font-light">Observability</span>
+                    <span id="conn-status" class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                </h1>
+                <div class="flex items-center gap-4 mt-1">
+                    <p class="text-slate-400 text-sm">Hierarchical Tracing & Workflow Visualization</p>
+                    <div id="active-agents" class="flex gap-2">
+                        <!-- Badges for active agents -->
+                    </div>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="clearDashboard()"
+                    class="px-4 py-2 glass rounded-lg hover:bg-slate-800 transition text-sm">Clear All</button>
+                <div class="px-4 py-2 glass rounded-lg text-sm flex items-center gap-2">
+                    <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                    <span id="event-count" class="font-mono">0</span> Events
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-12 gap-6">
+            <!-- Left Panel: Workflow & Leads -->
+            <div class="col-span-12 lg:col-span-8 flex flex-col gap-6">
+                <!-- Workflow Flow Visualization -->
+                <div class="glass rounded-2xl p-6 relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2
+                            class="text-sm font-semibold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path d="M13 10V3L4 14h7v7l9-11h-7z"
+                                    style="stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"></path>
+                            </svg>
+                            Execution Flow
+                        </h2>
+                        <div id="workflow-status" class="text-[10px] text-slate-500 font-mono">IDLE</div>
+                    </div>
+                    <div id="workflow-mermaid" class="mermaid flex justify-center py-8 min-h-[150px] transition-all">
+                        graph LR
+                        A[Awaiting Workflow...]:::dimmed
+                        classDef dimmed fill:none,stroke:#334155,color:#475569,stroke-dasharray: 5 5;
+                    </div>
+                </div>
+
+                <!-- Leads Pipeline -->
+                <div class="glass rounded-2xl p-6 flex-1 min-h-[400px] flex flex-col">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2
+                            class="text-sm font-semibold uppercase tracking-wider text-green-400 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                                    style="stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"></path>
+                            </svg>
+                            Discovery Pipeline
+                        </h2>
+                    </div>
+                    <div id="leads-container"
+                        class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                        <div class="col-span-full py-20 text-center text-slate-600 italic text-sm">No leads discovered
+                            in this session.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Trace Explorer -->
+            <div class="col-span-12 lg:col-span-4 h-[calc(100vh-12rem)] flex flex-col gap-6">
+                <div class="glass rounded-2xl p-6 flex-1 flex flex-col overflow-hidden">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2
+                            class="text-sm font-semibold uppercase tracking-wider text-yellow-400 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                    style="stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"></path>
+                            </svg>
+                            Hierarchical Trace
+                        </h2>
+                        <button onclick="clearTrace()"
+                            class="text-[10px] text-slate-500 hover:text-slate-300 transition-colors">Clear</button>
+                    </div>
+
+                    <!-- Search/Filter -->
+                    <div class="mb-4 relative">
+                        <input type="text" placeholder="Filter agents, tasks, or content..."
+                            oninput="filterTrace(this.value)"
+                            class="w-full bg-slate-950/50 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-slate-300 focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-600">
+                        <div class="absolute right-3 top-2 opacity-20 pointer-events-none">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round"></path>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div id="trace-list" class="flex-1 overflow-y-auto pr-2 space-y-1 custom-scrollbar">
+                        <!-- Trace entries -->
+                        <div class="text-slate-600 italic text-xs py-4">Waiting for system events...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inspector Modal -->
+    <div id="inspector-modal"
+        class="fixed inset-0 bg-slate-950/80 backdrop-blur-md hidden z-50 flex items-center justify-center p-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden scale-95 transition-transform duration-200"
+            id="modal-content-container">
+            <div class="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <div class="flex items-center gap-3">
+                    <span id="modal-tag"
+                        class="px-2 py-1 rounded text-[10px] font-bold tracking-widest uppercase bg-blue-500/10 text-blue-400">Payload</span>
+                    <h3 id="modal-title" class="text-lg font-semibold text-slate-100 italic">Event Details</h3>
+                </div>
+                <button onclick="closeInspector()" class="text-slate-400 hover:text-white transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 18L18 6M6 6l12 12"
+                            style="stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1 bg-slate-950/50">
+                <pre id="modal-json" class="mono text-xs text-blue-300 whitespace-pre-wrap leading-relaxed"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const traceList = document.getElementById('trace-list');
+        const leadsContainer = document.getElementById('leads-container');
+        const workflowMermaid = document.getElementById('workflow-mermaid');
+        const eventCountEl = document.getElementById('event-count');
+        const connStatus = document.getElementById('conn-status');
+        const inspectorModal = document.getElementById('inspector-modal');
+        const modalToken = document.getElementById('modal-tag');
+        const modalTitle = document.getElementById('modal-title');
+        const modalJson = document.getElementById('modal-json');
+
+        const leads = new Map();
+        let eventCount = 0;
+        let currentWorkflowSteps = [];
+        let activeStep = null;
+        let completedSteps = [];
+        let ws;
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = () => connStatus.classList.replace('bg-red-500', 'bg-green-500');
+            ws.onclose = () => {
+                connStatus.classList.replace('bg-green-500', 'bg-red-500');
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (msg) => {
+                const payload = JSON.parse(msg.data);
+                handleEvent(payload);
+            };
+        }
+
+        function handleEvent(payload) {
+            const { event, data, timestamp } = payload;
+            eventCount++;
+            eventCountEl.innerText = eventCount;
+
+            appendTrace(event, data, timestamp);
+
+            // Workflow Visualization
+            if (event === "pipeline:structure") {
+                currentWorkflowSteps = data.steps;
+                completedSteps = [];
+                updateWorkflowFlow();
+            } else if (event === "pipeline:step_start") {
+                activeStep = data.step;
+                updateWorkflowFlow();
+            } else if (event === "pipeline:step") {
+                completedSteps.push(data.step);
+                updateWorkflowFlow();
+            }
+
+            // Lead Discovery
+            if (event === "scraper:search_data" || event === "scraper:post_discovered") {
+                const posts = data.posts || (data.post ? [data.post] : []);
+                posts.forEach(post => {
+                    const name = post.author?.name || 'Unknown';
+                    if (!leads.has(name)) {
+                        leads.set(name, { ...post, status: 'found', analysis: '', timestamp });
+                        renderLeads();
+                    }
+                });
+            } else if (event === 'scraper:research_update' || event === 'pipeline:lead_result') {
+                const name = data.name || 'Unknown';
+                if (leads.has(name)) {
+                    const lead = leads.get(name);
+                    lead.status = data.status;
+                    lead.analysis = data.analysis || data.reason;
+                    if (data.url) lead.author.profile_link = data.url;
+                    renderLeads();
+                } else if (event === 'pipeline:lead_result') {
+                    // Create entry if missing (for late results)
+                    leads.set(name, {
+                        author: { name: name, profile_link: data.url, title: 'LinkedIn User' },
+                        content: 'Analysis result received.',
+                        status: data.status,
+                        analysis: data.reason,
+                        timestamp
+                    });
+                    renderLeads();
+                }
+            } else if (event === "pipeline:lead_verified") {
+                if (leads.has(data.name)) {
+                    const lead = leads.get(data.name);
+                    lead.status = 'match';
+                    lead.analysis = data.analysis;
+                    renderLeads();
+                }
+            }
+        }
+
+        async function updateWorkflowFlow() {
+            if (currentWorkflowSteps.length === 0) {
+                // Render initial state if not already done
+                if (!workflowMermaid.hasAttribute('data-processed')) {
+                    await mermaid.run({ nodes: [workflowMermaid] });
+                }
+                return;
+            }
+
+            let graph = "graph LR\n";
+            graph += "Start(( ))\n";
+
+            currentWorkflowSteps.forEach((step, i) => {
+                const id = `s${i}`;
+                let style = "";
+                if (step === activeStep) style = ":::active";
+                else if (completedSteps.includes(step)) style = ":::done";
+                else style = ":::todo";
+
+                graph += `${id}["<b>${step}</b>"]${style}\n`;
+                if (i === 0) graph += `Start --> ${id}\n`;
+                else graph += `s${i - 1} --> ${id}\n`;
+            });
+
+            graph += `classDef active fill:#1d4ed8,stroke:#3b82f6,stroke-width:3px,color:#fff;\n`;
+            graph += `classDef done fill:#064e3b,stroke:#10b981,stroke-width:1px,color:#fff;\n`;
+            graph += `classDef todo fill:none,stroke:#1e293b,color:#475569;\n`;
+
+            workflowMermaid.innerHTML = graph;
+            workflowMermaid.removeAttribute('data-processed');
+            await mermaid.run({ nodes: [workflowMermaid] });
+        }
+
+        const traceThreads = new Map(); // task_id -> { agent, events, lastUpdate, status }
+        const activeAgentsContainer = document.getElementById('active-agents');
+        let traceFilter = "";
+
+        function trackActiveAgents() {
+            const now = Date.now();
+            const active = new Set();
+
+            traceThreads.forEach((thread, taskId) => {
+                if (taskId === 'untethered') return;
+                // If the last event was less than 30s ago, consider it active
+                if (now - thread.lastUpdate < 30000) {
+                    active.add(thread.agent);
+                }
+            });
+
+            activeAgentsContainer.innerHTML = '';
+            active.forEach(agent => {
+                const span = document.createElement('span');
+                span.className = "px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-medium flex items-center gap-1.5 animate-pulse";
+                span.innerHTML = `<span class="w-1 h-1 bg-blue-400 rounded-full"></span> ${agent}`;
+                activeAgentsContainer.appendChild(span);
+            });
+        }
+
+        function appendTrace(event, data, timestamp) {
+            if (traceList.innerHTML.includes('Waiting for system events')) traceList.innerHTML = '';
+
+            const task_id = data.task_id || 'untethered';
+            if (!traceThreads.has(task_id)) {
+                traceThreads.set(task_id, {
+                    events: [],
+                    lastUpdate: Date.now(),
+                    agent: data.agent || 'System'
+                });
+            }
+
+            const thread = traceThreads.get(task_id);
+            thread.events.push({ event, data, timestamp });
+            thread.lastUpdate = Date.now();
+            thread.agent = data.agent || thread.agent;
+
+            trackActiveAgents();
+            renderTrace();
+        }
+
+
+        function renderTrace() {
+            // Sort threads by last update time (desc)
+            const sortedThreads = Array.from(traceThreads.entries())
+                .sort((a, b) => b[1].lastUpdate - a[1].lastUpdate);
+
+            // Re-render only if there are changes or on new events
+            // For simplicity in this demo, we clear and re-render, but with a simple filter check
+            const container = document.getElementById('trace-list');
+            const scrollPos = container.scrollTop;
+            container.innerHTML = '';
+
+            sortedThreads.forEach(([taskId, thread]) => {
+                const agent = (thread.agent || "").toLowerCase();
+                const tid = (taskId || "").toLowerCase();
+                const search = (traceFilter || "").toLowerCase();
+
+                const matchesFilter = !search ||
+                    agent.includes(search) ||
+                    tid.includes(search) ||
+                    thread.events.some(e => JSON.stringify(e).toLowerCase().includes(search));
+
+                if (!matchesFilter) return;
+
+                const threadDiv = document.createElement('div');
+                threadDiv.className = "mb-6 animate-fade-in";
+
+                const isSystem = taskId === 'untethered';
+                const headerColor = isSystem ? "text-slate-500" : "text-blue-400";
+
+                threadDiv.innerHTML = `
+                    <div class="flex items-center justify-between mb-2 px-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold uppercase tracking-widest ${headerColor}">${thread.agent}</span>
+                            ${!isSystem ? `<span class="text-[8px] font-mono opacity-30 bg-white/5 px-1 rounded">ID: ${taskId.substring(0, 8)}</span>` : ''}
+                        </div>
+                        <span class="text-[8px] opacity-20">${new Date(thread.lastUpdate).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="space-y-2 border-l-2 border-slate-800/50 ml-1 pl-3 py-1 trace-thread-line">
+                        ${thread.events.map(e => renderEventBubble(e)).join('')}
+                    </div>
+                `;
+                container.appendChild(threadDiv);
+            });
+
+            // Restore scroll if not at top
+            if (scrollPos > 10) container.scrollTop = scrollPos;
+        }
+
+        function renderEventBubble(payload) {
+            const { event, data, timestamp } = payload;
+            const time = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            let color = "bg-slate-900/40 border-slate-800";
+            let label = event.replace('agent:', '').replace('pipeline:', '').toUpperCase();
+            let icon = "◈";
+            let content = "";
+            let specialClass = "";
+
+            if (event.includes("thought")) {
+                color = "bg-indigo-500/10 border-indigo-500/20 thought-bubble";
+                icon = "💭";
+                content = `<div class="italic text-indigo-200/80 leading-relaxed">${data.thought}</div>`;
+                specialClass = "py-3 px-4 shadow-lg shadow-indigo-500/5";
+            } else if (event.includes("tool_call")) {
+                color = "bg-amber-500/10 border-amber-500/20";
+                icon = "🛠";
+                content = `Calling <b class="text-amber-400">${data.tool}</b>`;
+            } else if (event.includes("tool_result")) {
+                color = data.success ? "bg-emerald-500/10 border-emerald-500/20" : "bg-rose-500/10 border-rose-500/20";
+                icon = data.success ? "✓" : "✗";
+                content = `<span class="${data.success ? 'text-emerald-400' : 'text-rose-400'}">${data.tool} returned result</span>`;
+            } else if (event.includes("error")) {
+                color = "bg-red-500/10 border-red-500/20";
+                icon = "❌";
+                content = `<span class="text-red-400">ERROR: ${data.error || 'Unknown error'}</span>`;
+            } else if (event.startsWith("pipeline:")) {
+                color = "bg-blue-500/10 border-blue-500/20";
+                icon = "⚡";
+                content = data.step ? `Step Progress: <b class="text-blue-300">${data.step}</b>` : label;
+            } else {
+                content = data.message || JSON.stringify(data).substring(0, 80);
+            }
+
+            // Use a more robust way to pass data to the inspector
+            // We'll use a global registry for the click-to-view data to avoid encoding issues in attributes
+            if (!window.inspectorRegistry) window.inspectorRegistry = new Map();
+            const id = Math.random().toString(36).substring(7);
+            window.inspectorRegistry.set(id, data);
+
+            return `
+                <div class="group relative ${color} border rounded-xl p-2 cursor-pointer hover:border-slate-500 transition-all ${specialClass}" 
+                     onclick="openInspector('${event}', window.inspectorRegistry.get('${id}'))">
+                    <div class="flex items-center justify-between mb-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px]">${icon}</span>
+                            <span class="text-[8px] font-bold tracking-widest">${label}</span>
+                        </div>
+                        <span class="text-[7px] font-mono">${time}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-300">${content}</div>
+                </div>
+            `;
+        }
+
+        function filterTrace(val) {
+            traceFilter = val;
+            renderTrace();
+        }
+
+        function renderLeads() {
+            if (leads.size === 0) return;
+            leadsContainer.innerHTML = '';
+
+            Array.from(leads.values()).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(lead => {
+                const card = document.createElement('div');
+                const isMatch = lead.status === 'match';
+                const isRejected = lead.status === 'rejected';
+
+                card.className = `p-4 rounded-xl border transition-all hover:translate-y-[-2px] cursor-pointer animate-fade-in ${isMatch ? 'bg-green-500/5 border-green-500/20' :
+                    isRejected ? 'bg-red-500/5 border-red-500/10 opacity-60' :
+                        'bg-slate-800/50 border-slate-700'
+                    }`;
+
+                card.onclick = () => openInspector('Lead Info', lead);
+
+                const statusIcon = isMatch ? '🔥' : isRejected ? '🚫' : '🕵️';
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center font-bold text-slate-300">
+                                ${lead.author?.name?.charAt(0) || '?'}
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm text-white">${lead.author?.name || 'Unknown'}</h4>
+                                <p class="text-[10px] text-slate-500 truncate max-w-[150px]">${lead.author?.title || 'LinkedIn User'}</p>
+                            </div>
+                        </div>
+                        <span class="text-[14px]">${statusIcon}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 line-clamp-2 italic mb-3">"${lead.content || 'No content snippet'}"</p>
+                    ${lead.analysis ? `
+                        <div class="pt-3 border-t border-white/5 flex flex-col gap-1">
+                            <span class="text-[8px] font-bold uppercase text-slate-500 tracking-wider">Analysis</span>
+                            <p class="text-[10px] text-slate-300 line-clamp-3">${lead.analysis}</p>
+                        </div>
+                    ` : ''}
+                `;
+                leadsContainer.appendChild(card);
+            });
+        }
+
+        function openInspector(title, data) {
+            modalTitle.innerText = title.toUpperCase().replace(':', ' / ');
+            modalToken.innerText = title.split(':')[0] || 'DATA';
+            modalJson.innerText = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            inspectorModal.classList.remove('hidden');
+            setTimeout(() => document.getElementById('modal-content-container').classList.replace('scale-95', 'scale-100'), 10);
+        }
+
+        function closeInspector() {
+            document.getElementById('modal-content-container').classList.replace('scale-100', 'scale-95');
+            setTimeout(() => inspectorModal.classList.add('hidden'), 200);
+        }
+
+        function clearDashboard() {
+            leads.clear();
+            eventCount = 0;
+            completedSteps = [];
+            activeStep = null;
+            eventCountEl.innerText = '0';
+            traceList.innerHTML = '<div class="text-slate-600 italic text-xs py-4">Dashboard cleared.</div>';
+            leadsContainer.innerHTML = '<div class="col-span-full py-20 text-center text-slate-600 italic text-sm">Waiting for new leads...</div>';
+            workflowMermaid.innerHTML = 'graph LR\nA[Ready]';
+        }
+
+        function clearTrace() {
+            traceList.innerHTML = '<div class="text-slate-600 italic text-xs py-4">Trace cleared.</div>';
+        }
+
+        connect();
+        // Initial Mermaid render
+        updateWorkflowFlow();
+    </script>
+</body>
+
+</html>

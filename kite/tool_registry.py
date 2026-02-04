@@ -23,7 +23,34 @@ class ToolRegistry:
         
         # Optionally initialize MCP servers
         self._init_mcp_servers()
-    
+        
+    def load_standard_tools(self, framework):
+        """Automatically load and register all standard contrib tools."""
+        from .tool import Tool
+        from .tools.contrib import (
+            web_search, 
+            calculator, 
+            get_current_datetime,
+            search_linkedin_posts,
+            get_linkedin_profile_details,
+            get_linkedin_company_details,
+            create_linkedin_session
+        )
+        
+        standard_tools = [
+            ("web_search", web_search, "Search the web for information"),
+            ("calculator", calculator, "Evaluate mathematical expressions"),
+            ("get_datetime", get_current_datetime, "Get current date and time"),
+            ("search_linkedin", search_linkedin_posts, "Search for LinkedIn posts. REQUIRED: 'query'. Use 'limit' parameter (default 30) for depth."),
+            ("get_profile", get_linkedin_profile_details, "Get detailed profile information. REQUIRED: 'profile_url'."),
+            ("get_company", get_linkedin_company_details, "Get detailed company information. REQUIRED: 'company_url'."),
+            ("create_session", create_linkedin_session, "Create a LinkedIn session by logging in manually")
+        ]
+        
+        for name, func, desc in standard_tools:
+            if name not in self._tools:
+                self.register(name, Tool(name, func, desc))
+
     def _init_mcp_servers(self):
         """Initialize MCP servers if credentials available."""
         try:

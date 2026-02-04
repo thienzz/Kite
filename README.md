@@ -160,30 +160,26 @@ ai.graph_rag.add_relationship("Kite", "uses", "Circuit Breakers")
 answer = ai.graph_rag.query("How does Kite ensure reliability?")
 ```
 
-### 4. Agent Reasoning Patterns
+### 4. Agent Reasoning Patterns (Supported natively)
 
-**ReAct** (Reasoning + Acting):
+**ReAct** (Reasoning + Acting) - *Linear problem solving*:
 ```python
-agent = ai.create_agent("Assistant", tools=[search_tool, calculator])
-result = await agent.run("What's the GDP of France in 2024?")
+agent = ReActAgent("Engineer", "You are an engineer", tools=[search_tool], framework=ai)
+result = await agent.run("Research the best database for high throughput")
 ```
 
-**Plan-and-Execute** with replanning:
+**ReWOO** (Reasoning Without Observation) - *Fast, parallel execution*:
 ```python
-planner = ai.create_planning_agent(strategy="plan-and-execute")
-result = await planner.run("Research AI market and suggest pricing")
+# Generates a graph of tasks first, then executes independent tools in parallel
+agent = ReWOOAgent("Planner", "Plan then execute", tools=[search_tool], framework=ai)
+result = await agent.run("Find pricing for AWS, GCP, and Azure and compare them")
 ```
 
-**Tree-of-Thoughts** for complex reasoning:
+**Tree-of-Thoughts** (ToT) - *Complex exploration*:
 ```python
-tot = ai.create_planning_agent(strategy="tot", max_iterations=3)
-result = await tot.run("Evaluate 3 mitigation strategies for...")
-```
-
-**ReWOO** (parallel execution):
-```python
-rewoo = ai.create_planning_agent(strategy="rewoo")
-result = await rewoo.run("Search news for LangChain, CrewAI, AutoGPT")
+# Explores multiple reasoning branches (BFS/DFS) to find the optimal path
+agent = TreeOfThoughtsAgent("Architect", "Explore alternatives", tools=tools, framework=ai)
+result = await agent.run("Design a fault-tolerant system architecture")
 ```
 
 ### 5. Human-in-the-Loop Workflows
@@ -261,23 +257,40 @@ See [`.env.example`](.env.example) for full configuration.
 
 ---
 
-## 📚 Examples
+## 📚 Examples & Tutorials
 
-The [`examples/`](examples/) directory contains 9 production-ready case studies:
+**[👉 Click here for detailed Case Study Tutorials](examples/README.md)**
 
-1. **Invoice Pipeline** - Deterministic 4-step processing with validation
-2. **Semantic Router** - Intent classification using LLMs
-3. **SQL Analytics** - Natural language to SQL with safety checks
-4. **Research Assistant** - Multi-step search and synthesis
-5. **Enterprise System** - Full integration of all features
-6. **E-commerce Support** - Customer service automation
-7. **Advanced Planning** - Plan-Execute, ReWOO, Tree-of-Thoughts
-8. **Conversational Agents** - Multi-agent dialogue with consensus
-9. **Human-in-the-Loop** - Approval workflows with checkpoints
+The [`examples/`](examples/) directory contains 6 production-ready case studies. Check the **[Examples README](examples/README.md)** for step-by-step guides on each.
+
+1.  **[E-commerce Support](examples/case1_ecommerce_support.py)**
+    *   *Concept*: RAG + Tool Use + Contextual Memory.
+    *   *Demo*: "Where is my order?", "Return policy query".
+
+2.  **[Enterprise Data Scientist](examples/case2_enterprise_analytics.py)**
+    *   *Concept*: Hybrid Reasoning (SQL + Python Code Execution).
+    *   *Features*: Safe `PythonReplTool` (pandas/matplotlib), SQL querying of `sqlite` databases.
+    *   *Output*: Generates visual charts and insights.
+
+3.  **[Deep Research Assistant](examples/case3_research_assistant.py)**
+    *   *Concept*: Multi-step web research loop.
+    *   *Features*: Google Search integration, content synthesis, citation tracking.
+
+4.  **[Complex Iterative Workflow](examples/case4_complex_iterative_workflow.py)**
+    *   *Concept*: Human-in-the-Loop + State Management.
+    *   *Features*: Pausable workflows, approval checkpoints.
+
+5.  **[DevOps Automation](examples/case5_devops_automation.py)**
+    *   *Concept*: System Administration & Guardrails.
+    *   *Features*: Safe `ShellTool` (whitelisted commands), deployment simulation, circuit breakers.
+
+6.  **[Agent Architectures Showcase](examples/case6_reasoning_architectures.py)**
+    *   *Concept*: Reasoning Pattern Comparison.
+    *   *Features*: Direct comparison of **ReAct** (Linear), **ReWOO** (Parallel Plan), and **Tree-of-Thoughts** (Branching) on a complex design problem.
 
 Run any example:
 ```bash
-python examples/case1_invoice_pipeline_framework.py
+PYTHONPATH=. python3 examples/case6_reasoning_architectures.py
 ```
 
 ---

@@ -1,126 +1,208 @@
 """
-CASE 3: AI RESEARCH ASSISTANT
-==============================
-Comprehensive demonstration of planning and pipeline features.
-
-Features Demonstrated:
-[OK] Planning Agents - Plan-and-execute, ReWOO, ToT strategies
-[OK] Human-in-Loop - Approval workflows and checkpoints
-[OK] Deterministic Pipeline - Multi-step research process
-[OK] Web Search + Calculator - Built-in tools
-[OK] Document Loading - PDF, DOCX, HTML support
-[OK] RAG - Research context management
-[OK] Parallel Processing - Multi-query execution
-
-Real-world scenario: Research assistant that plans, executes, and validates
-research tasks with human oversight.
-
-Run: python examples/case3_research_assistant.py
+CASE 3: PRODUCTION DEEP RESEARCH ASSISTANT
+==========================================
+A production-grade Deep Research system that:
+1. Decomposes complex topics into sub-questions.
+2. Performs real parallel/iterative web searches.
+3. Synthesizes findings into a comprehensive report.
+4. Uses 'Fast' models for searching and 'Smart' models for analysis.
 """
 
 import os
 import sys
 import asyncio
+import json
+import time
 
+# Ensure pythonpath
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from kite import Kite
-
+from kite.optimization.resource_router import ResourceAwareRouter
+from kite.tools import WebSearchTool
+from kite.persistence import JSONCheckpointer
 
 async def main():
-    print("=" * 80)
-    print("CASE 3: AI RESEARCH ASSISTANT")
-    print("=" * 80)
-    print("\nDemonstrating: Planning, HITL, Pipeline, Tools, RAG\n")
-    
-    # Initialize
-    print("[STEP 1] Initializing framework...")
-    ai = Kite()
-    print("   [OK] Framework initialized")
-    
-    # Create planning agents
-    print("\n[STEP 2] Creating planning agents...")
-    
-    plan_execute = ai.create_planning_agent(
-        strategy="plan-and-execute",
-        name="ResearchPlanner",
-        max_iterations=5
-    )
-    
-    rewoo = ai.create_planning_agent(
-        strategy="rewoo",
-        name="ParallelResearcher",
-        max_iterations=3
-    )
-    
-    print("   [OK] Created 2 planning agents")
-    print("      - Plan-and-Execute (sequential)")
-    print("      - ReWOO (parallel)")
-    
-    # Test planning
     print("\n" + "=" * 80)
-    print("TESTING PLANNING STRATEGIES")
-    print("=" * 80)
-    
-    research_task = "Research the top 3 AI trends in 2024"
-    
-    print(f"\n[Task] {research_task}")
-    
-    # Plan-and-Execute
-    print("\n   Strategy 1: Plan-and-Execute (Sequential)")
-    result1 = await plan_execute.run(research_task)
-    print(f"   [OK] Completed in {result1.get('iterations', 0)} steps")
-    
-    # ReWOO (Parallel)
-    print("\n   Strategy 2: ReWOO (Parallel)")
-    result2 = await rewoo.run(research_task)
-    print(f"   [OK] Completed with parallel execution")
-    
-    # Test HITL pipeline
-    print("\n" + "=" * 80)
-    print("TESTING HUMAN-IN-LOOP PIPELINE")
-    print("=" * 80)
-    
-    print("\n   Creating deterministic research pipeline...")
-    
-    # Simulated pipeline steps
-    steps = [
-        "1. Gather sources",
-        "2. Extract key points",
-        "3. Synthesize findings",
-        "4. Generate report"
-    ]
-    
-    for step in steps:
-        print(f"   [OK] {step}")
-    
-    print("\n   [CHECKPOINT] Waiting for human approval...")
-    print("   [OK] Approved - continuing pipeline")
-    
-    # Metrics
-    print("\n" + "=" * 80)
-    print("RESEARCH METRICS")
-    print("=" * 80)
-    
-    print("\n   Plan-and-Execute:")
-    print(f"      Steps: 5")
-    print(f"      Time: 12.3s")
-    
-    print("\n   ReWOO (Parallel):")
-    print(f"      Parallel Tasks: 3")
-    print(f"      Time: 4.5s (2.7x faster)")
-    
-    print("\n" + "=" * 80)
-    print("[OK] CASE 3 COMPLETE - Research Assistant")
+    print("CASE 3: DEEP RESEARCH ASSISTANT (Production Mode)")
     print("=" * 80)
 
+    # --- 1. Initialize Framework ---
+    ai = Kite()
+    router = ResourceAwareRouter(ai.config)
+    
+    # Tools
+    search_tool = WebSearchTool()
+    
+    # Persistence
+    checkpointer = JSONCheckpointer("case3_research_state.json")
+    
+    # --- 2. Configuration ---
+    topic = "The Impact of Solid State Batteries on EV Industry by 2030"
+    max_sub_questions = 4
+    
+    # --- 3. Build Agents ---
+    
+    # PLANNER: Uses Smart Model to decompose the valid research strategy
+    planner = ai.create_agent(
+        name="Planner",
+        model=router.smart_model, # High reasoning capability
+        system_prompt=f"""You are a Strategic Research Lead.
+        Your goal is to break down a complex topic into {max_sub_questions} distinct, searchable sub-questions.
+        Ensure coverage of: Market Size, Technology Readiness, Key Players, and Challenges.
+        
+        Output strictly valid JSON:
+        {{
+            "plan": [
+                "Question 1...",
+                "Question 2..."
+            ]
+        }}
+        """,
+        verbose=True
+    )
+    
+    # RESEARCHER: Uses Fast Model + Search Tool for high-volume data gathering
+    researcher = ai.create_agent(
+        name="Researcher",
+        model=router.fast_model, # Speed & Low Cost
+        tools=[search_tool],
+        system_prompt="""You are an Expert Field Researcher.
+        You have access to 'web_search'.
+        Your job is to find CONCRETE facts, stats, and quotes for the given question.
+        
+        Do NOT summarize broadly. Give detailed notes / bullet points with sources.
+        Use 'web_search' aggressively. 
+        """,
+        verbose=True
+    )
+    
+    # ANALYST: Uses Smart Model to synthesize
+    analyst = ai.create_agent(
+        name="Analyst",
+        model=router.smart_model,
+        system_prompt="""You are a Chief Intelligence Officer.
+        Write a professional, markdown-formatted Research Report based EXCLUSIVELY on the provided notes.
+        
+        Structure:
+        # Title
+        ## Executive Summary
+        ## Detailed Findings (Grouped logically)
+        ## Strategic Outlook (2025-2030)
+        ## References
+        
+        Be data-driven. Cite sources if available in notes.
+        """,
+        verbose=True
+    )
+
+    # --- 4. Execution Workflow ---
+    
+    # A. Checkpoint Recovery
+    state = checkpointer.load()
+    if not state:
+        state = {
+            "topic": topic,
+            "plan": [],
+            "research_notes": {}, # question -> notes
+            "final_report": "",
+            "status": "planning"
+        }
+        print(f"   [System] Starting fresh research on: '{topic}'")
+    else:
+        print(f"   [System] Resuming research on: '{state['topic']}' (Status: {state['status']})")
+        
+    # B. Planning Phase
+    if state['status'] == "planning":
+        print("\n[Phase 1] Planning Research Strategy...")
+        res = await planner.run(f"Create a research plan for: {topic}")
+        
+        try:
+            # Extract JSON
+            import re
+            cleaned = re.sub(r"```json|```", "", res['response']).strip()
+            plan_data = json.loads(cleaned)
+            state['plan'] = plan_data.get('plan', [])
+            
+            # Validation
+            if not state['plan']:
+                raise ValueError("Planner returned empty plan.")
+                
+            print(f"   [Planner] Generated {len(state['plan'])} sub-questions.")
+            for i, q in enumerate(state['plan']):
+                print(f"      {i+1}. {q}")
+            
+            state['status'] = "researching"
+            checkpointer.save(state)
+            
+        except Exception as e:
+            print(f"   [Error] Planning failed: {e}")
+            return
+
+    # C. Research Phase (Iterative/Parallel)
+    if state['status'] == "researching":
+        print("\n[Phase 2] Executing Deep Research...")
+        
+        # We can implement this sequentially for reliability or parallel for speed
+        # For 'Deep Research', sequential often yields better 'Chain of Thought' observation in logs
+        
+        for i, question in enumerate(state['plan']):
+            if question in state['research_notes']:
+                print(f"   [Skip] Already researched: {question}")
+                continue
+                
+            print(f"\n   👉 Researching Q{i+1}: {question}")
+            
+            # Using context from previous questions to avoid duplication? 
+            # ideally yes, but let's keep it independent for now to avoid context overflow
+            
+            res = await researcher.run(f"Find detailed information for: {question}")
+            state['research_notes'][question] = res['response']
+            
+            # Respect Rate Limits (Groq has tight limits for free tier)
+            print("   [System] Cooling down for 2s...")
+            time.sleep(2)
+            
+            # Save progress after each step
+            checkpointer.save(state)
+            
+        state['status'] = "reporting"
+        checkpointer.save(state)
+
+    # D. Reporting Phase
+    if state['status'] == "reporting":
+        print("\n[Phase 3] Synthesizing Final Report...")
+        
+        # Compile Context
+        context = f"TOPIC: {state['topic']}\n\nRESEARCH NOTES:\n"
+        for q, notes in state['research_notes'].items():
+            context += f"## Q: {q}\n{notes}\n\n"
+            
+        print(f"   [Analyst] Reading {len(context)} chars of notes...")
+        
+        res = await analyst.run("Write the final report now.", context=context)
+        state['final_report'] = res['response']
+        state['status'] = "completed"
+        checkpointer.save(state)
+        
+    # E. Final Output
+    if state['status'] == "completed":
+        filename = "research_report.md"
+        with open(filename, "w") as f:
+            f.write(state['final_report'])
+            
+        print("\n" + "=" * 80)
+        print(f"RESEARCH COMPLETED. Report saved to: {filename}")
+        print("=" * 80)
+        
+        # Optional: Auto-clear checkpoint if successful
+        checkpointer.clear()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n\n[WARN] Interrupted by user")
+        print("\n[Stopped] User interrupt.")
     except Exception as e:
-        print(f"\n\n[ERROR] {e}")
         import traceback
         traceback.print_exc()

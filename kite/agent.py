@@ -1,45 +1,63 @@
 import json
 import asyncio
 import re
+import time
 from typing import List, Dict, Optional, Callable
 
 
 class Agent:
     """
-    High-reliability agent with direct extraction and termination guards.
+    High-reliability agent with native tool calling and direct extraction fallback.
     """
     
     def __init__(self, 
                  name: str,
                  system_prompt: str,
-                 llm,
                  tools: List,
                  framework,
+                 llm=None,
                  max_iterations: int = 10,
+                 knowledge_sources: List[str] = None,
+                 verbose: bool = False,
                  agent_type: str = "simple"):
         self.name = name
         self.system_prompt = system_prompt
-        self.llm = llm
+        # Logic: Explicit LLM > Framework LLM > Error
+        self.llm = llm or getattr(framework, 'llm', None)
+        if not self.llm:
+            raise ValueError("Agent requires an LLM. Pass 'llm' explicitly or provide a 'framework' with an initialized LLM.")
         self.tools = {tool.name: tool for tool in tools}
         self.framework = framework
         self.max_iterations = max_iterations
+        self.knowledge_sources = knowledge_sources or []
+        self.verbose = verbose
         self.agent_type = agent_type
         
         # Stats
         self.call_count = 0
         self.success_count = 0
         self.metadata = {
-            "llm": getattr(llm, 'name', getattr(llm, 'model', 'unknown'))
+            "llm": getattr(self.llm, 'name', getattr(self.llm, 'model', 'unknown'))
         }
         
         # Log creation
-        print(f"     Agent '{self.name}' initialized (LLM: {self.metadata['llm']})")
+        if self.verbose:
+            print(f"     Agent '{self.name}' initialized (LLM: {self.metadata['llm']})")
+
+    def record_outcome(self, outcome_type: str):
+        """Record a domain-specific outcome (e.g., 'lead', 'reject')."""
+        self.framework.metrics.record_outcome(self.name, outcome_type)
     
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """
-        Run agent on input.
+        Run agent on input using Native Tool Calling (if supported) or ReAct fallback.
         """
         self.call_count += 1
+        self.framework.event_bus.emit("agent:run:start", {"agent": self.name, "input": user_input})
+        
+        start_time = time.time()
+        success = True
+        error_type = None
         
         if self.agent_type == "simple":
             return await self._run_simple(user_input, context)
@@ -103,7 +121,13 @@ class Agent:
                         try:
                             cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
                             print(f"      | [ACTION] {tool_name}({tool_args})")
-                            result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            # Simple mode uses basic execute
+                            # Handle both sync and async tools
+                            if asyncio.iscoroutinefunction(self.tools[tool_name].execute):
+                                result = await self.tools[tool_name].execute(**cleaned_args)
+                            else:
+                                result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            
                             observation_text += f"- Tool '{tool_name}' returned: {result}\n"
                         except Exception as e:
                             observation_text += f"- Tool '{tool_name}' FAILED: {str(e)}\n"
@@ -127,7 +151,7 @@ class Agent:
                 "iterations": iterations
             }
         except Exception as e:
-            return {"success": False, "error": str(e), "agent": self.name}
+            return {"success": False, "error": str(e), "response": f"Error: {str(e)}", "agent": self.name}
 
     async def _call_llm(self, messages: List[Dict]) -> str:
         """Centralized LLM call handles both Chat and Completion APIs."""
@@ -149,44 +173,63 @@ class Agent:
     async def _run_react(self, user_input: str, context: Optional[Dict] = None) -> Dict:
         """Multi-iteration loop version with tool-calling and self-healing."""
         try:
-            session_tool_results = {} # norm -> {"data": ..., "success": bool}
-            successful_norms = set()
-            failed_norms = {} # norm -> error_msg
-            messages = []
+            native_tools = [t.to_schema() for t in self.tools.values()] if self.tools else []
+            messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user_input}]
             
-            def normalize_call(name: str, args: Dict) -> str:
-                if not isinstance(args, dict):
-                    return f"{name}:{str(args).strip()}"
-                clean = {str(k).lower(): str(v).strip() for k, v in args.items()}
-                sorted_str = json.dumps(clean, sort_keys=True)
-                return f"{name}:{sorted_str}"
+            # Context Injection
+            if context:
+                messages[0]["content"] += f"\n\nContext: {context}"
+                
+            # Knowledge Retrieval
+            knowledge_context = ""
+            if self.knowledge_sources and hasattr(self.framework, 'knowledge'):
+                for source_name in self.knowledge_sources:
+                    data = self.framework.knowledge.data.get(source_name)
+                    if data:
+                        matched = []
+                        categories = []
+                        for key, val in data.items():
+                            categories.append(key)
+                            if key.lower() in user_input.lower():
+                                matched.append(f"- [{source_name}] {key}: {val}")
+                        
+                        if matched:
+                            knowledge_context += f"\n### KNOWLEDGE CONTEXT ({source_name}):\n"
+                            knowledge_context += "\n".join(matched) + "\n"
+                        else:
+                            knowledge_context += f"\n### AVAILABLE KNOWLEDGE CATEGORIES in {source_name}:\n"
+                            knowledge_context += f"You have expert expertise in: {', '.join(categories)}.\n"
+
+                    # Vector Memory
+                    if hasattr(self.framework, 'vector_memory'):
+                        try:
+                            mem_results = self.framework.vector_memory.search(user_input, k=3)
+                            for _, text, dist in mem_results:
+                                if dist < 0.5:
+                                        knowledge_context += f"- [Memory:{source_name}] {text[:200]}...\n"
+                        except: pass
             
-            last_valid_response = ""
+            if knowledge_context:
+                messages[0]["content"] += f"\n\n{knowledge_context}"
+                self.framework.event_bus.emit("knowledge:retrieved", {
+                    "agent": self.name,
+                    "context": knowledge_context,
+                    "message": "Domain expertise injected from Knowledge Base"
+                })
 
-            for i in range(self.max_iterations):
-                if i > 0:
-                    print(f"      [DEBUG] [{self.name}] Iteration {i+1}/{self.max_iterations}...")
-
-                # 1. Build Dynamic Memory
+            # Append Tool Info for Legacy mode anyway (some models need it even with native tools, or as backup)
+            if self.tools:
+                tool_info = f"\n\nAVAILABLE TOOLS:\n"
+                for tool in self.tools.values():
+                    tool_info += f"- {tool.name}: {tool.description}\n"
+                # Add ReAct instructions slightly modified to stay compatible
+                tool_info += "\nNOTE: You can use tools natively if supported, OR output 'Action: [{...}]' JSON."
+                
+                # Upstream prompt logic
                 memory_text = ""
-                if session_tool_results:
-                    memory_text = "\n### CURRENT MEMORY (Verified Facts):\n"
-                    for norm, val in session_tool_results.items():
-                        if val['success']:
-                            memory_text += f"- {norm} -> {val['data']}\n"
+                # Could read memory here if we had logic, but assuming upstream conflict block had it:
                 
-                # 2. Build Prompt
-                full_system_prompt = self.system_prompt
-                if context:
-                    full_system_prompt += f"\n\nContext: {context}"
-                
-                if self.tools:
-                    tool_info = f"\n\nAVAILABLE TOOLS:\n"
-                    for tool in self.tools.values():
-                        tool_info += f"- {tool.name}: {tool.description}\n"
-                    
-                    tool_info += f"""
-{memory_text}
+                tool_info += f"""
 
 ### CRITICAL OPERATIONAL RULES:
 1. **Mental Lock**: If a fact is in CURRENT MEMORY, you MUST NOT ask for it again. PROPOSING A REDUNDANT TOOL IS A FAILURE.
@@ -205,141 +248,233 @@ Thought:
 Action: [{{"name": "...", "args": {{...}}}}] (OMIT IF GOAL IS REACHED)
 Final Answer: [The final response to the user]
 """
-                    full_system_prompt += tool_info
+                messages[0]["content"] += tool_info
 
-                system_msg = {"role": "system", "content": full_system_prompt}
-                if i == 0:
-                    messages = [system_msg, {"role": "user", "content": user_input}]
+            all_data = {}
+            last_valid_response = ""
+            response = ""
+
+            for i in range(self.max_iterations):
+                if i > 0:
+                    print(f"      [DEBUG] [{self.name}] Iteration {i+1}/{self.max_iterations}...")
+
+                # Call LLM
+                response_data = None
+                try:
+                    # Optimized Fallback Logic: Don't retry native tools if they already failed once
+                    should_try_native = (
+                        native_tools 
+                        and hasattr(self.llm, 'chat_async') 
+                        and not getattr(self, '_native_tools_failed', False)
+                    )
+                    
+                    try:
+                        if should_try_native:
+                            response_data = await self.llm.chat_async(messages, tools=native_tools)
+                        elif hasattr(self.llm, 'chat_async'):
+                            response_data = await self.llm.chat_async(messages)
+                        elif hasattr(self.llm, 'complete_async'):
+                            # Fallback for completion only models
+                            prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+                            response_data = await self.llm.complete_async(prompt)
+                        else:
+                            # Sync fallback
+                            if hasattr(self.llm, 'chat'):
+                                response_data = await asyncio.to_thread(self.llm.chat, messages)
+                            else:
+                                prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+                                response_data = await asyncio.to_thread(self.llm.complete, prompt)
+                    except Exception as e:
+                        if should_try_native and "tool" in str(e).lower():
+                             print(f"      [DEBUG] Native tool call failed ({e}), falling back to text for this session...")
+                             self._native_tools_failed = True
+                             response_data = await self.llm.chat_async(messages)
+                        else:
+                            raise e
+
+                except Exception as e:
+                    print(f"      [LLM ERROR] {e}")
+                    # Retry once?
+                    time.sleep(1)
+                    continue
+
+                # Handle Response
+                tool_calls = []
+                content = ""
+                
+                if isinstance(response_data, dict):
+                    # Native Tool Call
+                    content = response_data.get("content", "")
+                    tool_calls_raw = response_data.get("tool_calls", [])
+                    
+                    # Convert raw API tool calls to internal format
+                    for tc in tool_calls_raw:
+                        if isinstance(tc, dict):
+                            # OpenAI/Ollama format: function: {name, arguments}
+                            func = tc.get("function", {})
+                            name = func.get("name")
+                            args = func.get("arguments")
+                            tool_id = tc.get("id")
+                            if isinstance(args, str):
+                                try: args = json.loads(args)
+                                except: pass
+                            if name:
+                                tool_calls.append((name, args, tool_id))
+                                
                 else:
-                    messages[0] = system_msg 
+                    # Text Response (Legacy ReAct check)
+                    content = str(response_data)
+                    last_valid_response = content
+                    tool_calls_raw = await self._extract_tool_calls(content, context)
+                    # Normalize legacy extraction to include None ID
+                    tool_calls = [(name, args, None) for name, args in tool_calls_raw]
                 
-                # Get response using unified caller
-                response = await self._call_llm(messages)
+                # Update history
+                if content:
+                    messages.append({"role": "assistant", "content": content})
+                    last_valid_response = content
                 
-                # IMMEDIATE State Commitment
-                last_valid_response = response.strip()
-                
-                # High-Visibility Reasoning Box
-                border = "=" * 60
-                print(f"\n      {border}")
-                print(f"      [ {self.name} REASONING ]")
-                print(f"      {border}")
-                for line in last_valid_response.split('\n'):
-                    print(f"      | {line.strip()}")
-                print(f"      {border}\n")
-                
-                # 1. Extract tool calls FIRST to prevent premature termination
-                tool_calls = await self._extract_tool_calls(last_valid_response, context=context)
-                
-                # 2. Robust Termination Check
-                # Only break if "Final Answer:" exists AND hasn't been blocked by the presence of actions
-                final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_valid_response, re.IGNORECASE)
-                has_valid_answer = False
-                if final_answer_match:
-                    answer_text = final_answer_match.group(1).strip().lower()
-                    placeholders = ["none", "not yet", "waiting", "i'll wait", "not yet retrieved", "waiting for response"]
-                    if answer_text and not any(p in answer_text for p in placeholders):
-                         has_valid_answer = True
-                
-                # We ONLY break if we have a valid answer AND no pending tools
-                if has_valid_answer and not tool_calls:
-                    break
-                
-                if not tool_calls:
-                    print(f"      [{self.name}] No Action and no valid Final Answer. Nudging...")
-                    messages.append({"role": "assistant", "content": last_valid_response})
-                    messages.append({
-                        "role": "user", 
-                        "content": "ERROR: You provided neither an 'Action:' nor a 'Final Answer:'. If you are done, provide your final response after 'Final Answer:'. If not, provide a NEW 'Action:'."
-                    })
-                    continue
+                if tool_calls and not content:
+                     messages.append({"role": "assistant", "content": "", "tool_calls": response_data.get("tool_calls")} if isinstance(response_data, dict) else {"role": "assistant", "content": "Executing tools..."})
 
-                # Filter and Executerd
-                filtered_tool_calls = []
-                skipped_observations = []
-                for name, args in tool_calls:
-                    norm = normalize_call(name, args)
-                    if norm in successful_norms:
-                        print(f"      [{self.name}] Skipping redundant success: {name}({args})")
-                        skipped_observations.append(f"- Tool '{name}' previously returned: {session_tool_results[norm]['data']}")
-                    elif norm in failed_norms:
-                        print(f"      [{self.name}] Blocking known failure: {name}({args})")
-                        skipped_observations.append(f"- Tool '{name}' previously FAILED: {failed_norms[norm]}. Fix parameters.")
+                # EMIT THOUGHT
+                if content:
+                    self.framework.event_bus.emit("agent:thought", {
+                        "agent": self.name,
+                        "thought": content,
+                        "iteration": i + 1,
+                        "task_id": context.get('task_id') if isinstance(context, dict) else None
+                    })
+
+                # Check Termination
+                if not tool_calls: 
+                    if "Final Answer:" in content:
+                        clean_answer = content.split("Final Answer:")[-1].strip()
+                        self.success_count += 1
+                        return {
+                            "success": True,
+                            "response": clean_answer,
+                            "full_log": content,
+                            "agent": self.name,
+                            "data": all_data,
+                            "iterations": i + 1,
+                            "type": "react"
+                        }
+                    
+                    if content and (not native_tools or not "Action:" in content):
+                         self.success_count += 1
+                         return {
+                            "success": True,
+                            "response": content,
+                            "full_log": content,
+                            "agent": self.name,
+                            "data": all_data,
+                            "iterations": i + 1,
+                            "type": "react"
+                        }
+
+                # Execute Tools
+                for item in tool_calls:
+                    if len(item) == 3:
+                        name, args, tool_id = item
                     else:
-                        filtered_tool_calls.append((name, args))
-                
-                if not filtered_tool_calls:
-                    print(f"      [{self.name}] All proposed actions are redundant. Forcing Final Answer.")
-                    messages.append({"role": "assistant", "content": last_valid_response})
-                    messages.append({
-                        "role": "user",
-                        "content": "CRITICAL: You are repeating tool calls already in your MEMORY. PROVIDE YOUR 'Final Answer:' NOW."
-                    })
-                    continue
+                        name, args = item
+                        tool_id = None
 
-                # Execute
-                tool_results = []
-                for tool_name, tool_args in filtered_tool_calls:
-                    if tool_name in self.tools:
-                        norm = normalize_call(tool_name, tool_args)
+                    if name in self.tools:
+                        if self.verbose:
+                            print(f"      | [ACTION] {name}({args})")
                         try:
-                            cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
-                            print(f"      | [ACTION] {tool_name}({tool_args})")
-                            result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            # Pass framework to tool execution if needed (e.g. for accessing llm inside tool)
+                            cleaned_args = {str(k): v for k, v in args.items()} if isinstance(args, dict) else {}
                             
-                            tool_results.append({"tool": tool_name, "result": result, "success": True})
-                            session_tool_results[norm] = {"data": result, "success": True}
-                            successful_norms.add(norm)
-                            if norm in failed_norms: del failed_norms[norm]
-                        except Exception as tool_err:
-                            err_msg = str(tool_err)
-                            print(f"      [{self.name} FAILED] {tool_name}: {err_msg}")
-                            tool_results.append({"tool": tool_name, "error": err_msg, "success": False})
-                            session_tool_results[norm] = {"data": err_msg, "success": False}
-                            failed_norms[norm] = err_msg
-                
-                messages.append({"role": "assistant", "content": last_valid_response})
-                observation_text = "Observations:\n"
-                for obs in skipped_observations:
-                    observation_text += obs + "\n"
-                for res in tool_results:
-                    if res.get('success'):
-                        observation_text += f"- Tool '{res['tool']}' returned: {res['result']}\n"
-                    else:
-                        observation_text += f"- Tool '{res['tool']}' FAILED: {res.get('error')}\n"
-                messages.append({"role": "user", "content": observation_text})
-            
-            # CLEAN FINAL ANSWER EXTRACTION
-            clean_answer = last_valid_response
-            final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_valid_response, re.IGNORECASE)
-            if final_answer_match:
-                clean_answer = final_answer_match.group(1).strip()
-            
-            self.success_count += 1
+                            self.framework.event_bus.emit("agent:tool_call", {"agent": self.name, "tool": name, "args": args})
+                            # Using self.framework as context
+                            result = await self.tools[name].execute(**cleaned_args, framework=self.framework)
+                            self.framework.event_bus.emit("agent:tool_result", {"agent": self.name, "tool": name, "result": result, "success": True})
+                            
+                            all_data[name] = result
+                            
+                            # Append Result
+                            if tool_id:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": name,
+                                    "content": str(result)
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"Tool '{name}' Output: {result}"
+                                })
+                            
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"      [{self.name} FAILED] {name}: {e}")
+                            self.framework.event_bus.emit("agent:tool_result", {"agent": self.name, "tool": name, "error": str(e), "success": False})
+                            
+                            if tool_id:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": name,
+                                    "content": f"Error: {e}"
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"Tool '{name}' Failed: {e}"
+                                })
+
+            # Max iterations reached
             return {
-                "success": True,
-                "response": clean_answer, # Return ONLY the clean answer to the caller
-                "full_log": last_valid_response, # Keep logs for internal audit
+                "success": False,
+                "response": "Max iterations reached without Final Answer.",
+                "full_log": last_valid_response,
                 "agent": self.name,
-                "iterations": i + 1,
+                "data": all_data,
+                "iterations": self.max_iterations,
                 "type": "react"
             }
             
         except Exception as e:
-            return {"success": False, "error": str(e), "agent": self.name}
-    
+            import traceback
+            traceback.print_exc()
+            success = False
+            error_type = type(e).__name__
+            return {"success": False, "error": str(e), "response": f"Error: {str(e)}", "agent": self.name}
+        finally:
+            duration = time.time() - start_time
+            self.framework.metrics.record_request(self.name, "run", duration, success, error_type)
+
+    def run_sync(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """
+        Synchronous wrapper for run.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(self.run(user_input, context))
+        else:
+            return asyncio.run(self.run(user_input, context))
+
     async def _extract_tool_calls(self, response: str, context: Optional[Dict] = None) -> List:
         """Robust tool extraction combining direct regex and LLM fallback."""
         if not self.tools: return []
         
         # 1. OPTIMIZATION: Direct Regex Extraction from response text
-        # This is 100% reliable if the model follows the Action format.
-        # We look for a JSON block after the word "Action:"
         action_match = re.search(r"Action:\s*(\[.*?\])", response, re.DOTALL)
         if action_match:
             try:
                 raw_json = action_match.group(1).strip()
-                # Pre-processing to fix common LLM JSON errors (like missing quotes on keys or trailing commas)
                 raw_json = re.sub(r'\}\s*\{', '}, {', raw_json)
                 calls = json.loads(raw_json)
                 if isinstance(calls, list):
