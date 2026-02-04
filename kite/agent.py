@@ -18,7 +18,8 @@ class Agent:
                  llm=None,
                  max_iterations: int = 10,
                  knowledge_sources: List[str] = None,
-                 verbose: bool = False):
+                 verbose: bool = False,
+                 agent_type: str = "simple"):
         self.name = name
         self.system_prompt = system_prompt
         # Logic: Explicit LLM > Framework LLM > Error
@@ -30,6 +31,7 @@ class Agent:
         self.max_iterations = max_iterations
         self.knowledge_sources = knowledge_sources or []
         self.verbose = verbose
+        self.agent_type = agent_type
         
         # Stats
         self.call_count = 0
@@ -57,6 +59,119 @@ class Agent:
         success = True
         error_type = None
         
+        if self.agent_type == "simple":
+            return await self._run_simple(user_input, context)
+        return await self._run_react(user_input, context)
+
+    async def _run_simple(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """Single-pass/Fast-pass version for maximum speed with tool support."""
+        system_p = self.system_prompt
+        if context:
+            system_p += f"\n\nContext: {context}"
+        
+        if self.tools:
+            system_p += "\n\n### AVAILABLE TOOLS:\n"
+            for tool in self.tools.values():
+                # Provide simplified arg names for better LLM adherence in simple mode
+                defn = tool.get_definition()
+                params = list(defn.get('parameters', {}).keys())
+                system_p += f"- {tool.name}: {tool.description} (Expected Arguments: {params})\n"
+            
+            system_p += """
+### OPERATIONAL RULES:
+1. **Tool Use**: If you need information from a tool, you MUST use an Action.
+2. **Format**: Use the following format:
+   Action: [{"name": "...", "args": {...}}]
+3. **No Placeholders**: Never guess or hallucinate data. If you don't know, use a Tool or say you don't know.
+4. **Final Answer**: Once you have all info, provide it after 'Final Answer:'.
+"""
+
+        messages = [
+            {"role": "system", "content": system_p},
+            {"role": "user", "content": user_input}
+        ]
+        
+        try:
+            last_response = ""
+            iterations = 0
+            # Simple mode allows up to 3 steps (e.g. Search -> Process -> Final Answer)
+            for i in range(3):
+                iterations = i + 1
+                response = await self._call_llm(messages)
+                last_response = response.strip()
+                messages.append({"role": "assistant", "content": last_response})
+
+                # Simple visibility
+                if "Action:" in last_response or "Final Answer:" in last_response:
+                    border = "-" * 40
+                    print(f"\n      {border}\n      [ {self.name} (SIMPLE) ] Step {iterations}\n      {border}")
+                    for line in last_response.split('\n'):
+                        if line.strip(): print(f"      | {line.strip()}")
+                    print(f"      {border}\n")
+
+                # Tool extraction
+                tool_calls = await self._extract_tool_calls(last_response, context=context)
+                if not tool_calls:
+                    break
+                
+                # Execute tools
+                observation_text = "Observations:\n"
+                for tool_name, tool_args in tool_calls:
+                    if tool_name in self.tools:
+                        try:
+                            cleaned_args = {str(k): v for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
+                            print(f"      | [ACTION] {tool_name}({tool_args})")
+                            # Simple mode uses basic execute
+                            # Handle both sync and async tools
+                            if asyncio.iscoroutinefunction(self.tools[tool_name].execute):
+                                result = await self.tools[tool_name].execute(**cleaned_args)
+                            else:
+                                result = await asyncio.to_thread(self.tools[tool_name].execute, **cleaned_args)
+                            
+                            observation_text += f"- Tool '{tool_name}' returned: {result}\n"
+                        except Exception as e:
+                            observation_text += f"- Tool '{tool_name}' FAILED: {str(e)}\n"
+                
+                messages.append({"role": "user", "content": observation_text})
+                # Maximum 2 action interactions in 'simple' mode to keep it fast
+                if i == 1: continue
+            
+            # Extract final answer
+            clean_answer = last_response
+            final_answer_match = re.search(r"Final Answer:\s*([\s\S]+)", last_response, re.IGNORECASE)
+            if final_answer_match:
+                clean_answer = final_answer_match.group(1).strip()
+            
+            self.success_count += 1
+            return {
+                "success": True,
+                "response": clean_answer,
+                "agent": self.name,
+                "type": "simple",
+                "iterations": iterations
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e), "response": f"Error: {str(e)}", "agent": self.name}
+
+    async def _call_llm(self, messages: List[Dict]) -> str:
+        """Centralized LLM call handles both Chat and Completion APIs."""
+        if hasattr(self.llm, 'chat_async'):
+            return await self.llm.chat_async(messages)
+        
+        # Fallback to complete (build text prompt)
+        prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+        
+        if hasattr(self.llm, 'complete_async'):
+            return await self.llm.complete_async(prompt)
+        
+        # Sync fallbacks
+        if hasattr(self.llm, 'chat'):
+            return await asyncio.to_thread(self.llm.chat, messages)
+            
+        return await asyncio.to_thread(self.llm.complete, prompt)
+
+    async def _run_react(self, user_input: str, context: Optional[Dict] = None) -> Dict:
+        """Multi-iteration loop version with tool-calling and self-healing."""
         try:
             native_tools = [t.to_schema() for t in self.tools.values()] if self.tools else []
             messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user_input}]
@@ -109,10 +224,35 @@ class Agent:
                     tool_info += f"- {tool.name}: {tool.description}\n"
                 # Add ReAct instructions slightly modified to stay compatible
                 tool_info += "\nNOTE: You can use tools natively if supported, OR output 'Action: [{...}]' JSON."
+                
+                # Upstream prompt logic
+                memory_text = ""
+                # Could read memory here if we had logic, but assuming upstream conflict block had it:
+                
+                tool_info += f"""
+
+### CRITICAL OPERATIONAL RULES:
+1. **Mental Lock**: If a fact is in CURRENT MEMORY, you MUST NOT ask for it again. PROPOSING A REDUNDANT TOOL IS A FAILURE.
+2. **True Termination**: You MUST provide a "Final Answer: [result]" and STOP ONLY when the user's request is 100% fulfilled.
+3. **Evidence-Based Checklist**: When marking a task as [Done], you MUST include the SPECIFIC data retrieved. 
+   - Good: [Done] Found order ORD-001: Status is Shipped, delivery tomorrow.
+4. **Action Format**: Action: [{{"name": "...", "args": {{...}}}}] (Only if NEW data is needed)
+5. **No Placeholders**: Never use "Final Answer: None" or "Final Answer: Not yet". If you aren't done, ONLY provide an Action or Thought.
+
+### Reasoning Format:
+Thought: 
+  Goal: [objective]
+  Checklist:
+  - [status] task 1 (include specific data if Done)
+  Reasoning: [Analysis of Memory vs Goal]
+Action: [{{"name": "...", "args": {{...}}}}] (OMIT IF GOAL IS REACHED)
+Final Answer: [The final response to the user]
+"""
                 messages[0]["content"] += tool_info
 
             all_data = {}
             last_valid_response = ""
+            response = ""
 
             for i in range(self.max_iterations):
                 if i > 0:
@@ -128,28 +268,30 @@ class Agent:
                         and not getattr(self, '_native_tools_failed', False)
                     )
                     
-                    if should_try_native:
-                        # Try passing tools
-                        try:
+                    try:
+                        if should_try_native:
                             response_data = await self.llm.chat_async(messages, tools=native_tools)
-                        except Exception as e:
-                            # Fallback if provider/model doesn't support tools arg (TypeError) or API rejects it (HTTP 400)
-                            print(f"      [DEBUG] Native tool call failed ({e}), permanently falling back to text for this session...")
-                            self._native_tools_failed = True
+                        elif hasattr(self.llm, 'chat_async'):
                             response_data = await self.llm.chat_async(messages)
-                    elif hasattr(self.llm, 'chat_async'):
-                        response_data = await self.llm.chat_async(messages)
-                    elif hasattr(self.llm, 'complete_async'):
-                        # Fallback for completion only models
-                        prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
-                        response_data = await self.llm.complete_async(prompt)
-                    else:
-                        # Sync fallback
-                        if hasattr(self.llm, 'chat'):
-                            response_data = await asyncio.to_thread(self.llm.chat, messages)
-                        else:
+                        elif hasattr(self.llm, 'complete_async'):
+                            # Fallback for completion only models
                             prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
-                            response_data = await asyncio.to_thread(self.llm.complete, prompt)
+                            response_data = await self.llm.complete_async(prompt)
+                        else:
+                            # Sync fallback
+                            if hasattr(self.llm, 'chat'):
+                                response_data = await asyncio.to_thread(self.llm.chat, messages)
+                            else:
+                                prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+                                response_data = await asyncio.to_thread(self.llm.complete, prompt)
+                    except Exception as e:
+                        if should_try_native and "tool" in str(e).lower():
+                             print(f"      [DEBUG] Native tool call failed ({e}), falling back to text for this session...")
+                             self._native_tools_failed = True
+                             response_data = await self.llm.chat_async(messages)
+                        else:
+                            raise e
+
                 except Exception as e:
                     print(f"      [LLM ERROR] {e}")
                     # Retry once?
@@ -193,11 +335,7 @@ class Agent:
                     last_valid_response = content
                 
                 if tool_calls and not content:
-                     # If no content but tools, add a placeholder assistant msg (required by some APIs)
-                     # For Ollama we might need to be careful.
-                     # We skip adding an empty content message if we handled it via the dict above?
-                     # Actually to keep the chat history valid, we should add the assistant's turn that invoked the tool.
-                     messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls_raw} if isinstance(response_data, dict) else {"role": "assistant", "content": "Executing tools..."})
+                     messages.append({"role": "assistant", "content": "", "tool_calls": response_data.get("tool_calls")} if isinstance(response_data, dict) else {"role": "assistant", "content": "Executing tools..."})
 
                 # EMIT THOUGHT
                 if content:
@@ -219,15 +357,11 @@ class Agent:
                             "full_log": content,
                             "agent": self.name,
                             "data": all_data,
-                            "iterations": i + 1
+                            "iterations": i + 1,
+                            "type": "react"
                         }
                     
-                    # In native mode, if we get text and no tools, and it's NOT a clarifying question (heuristic), we might be done.
-                    # But for safety, we rely on "Final Answer" or implicit end.
-                    # If we simply return text, we might be done.
-                    # If we simply return text, we might be done.
                     if content and (not native_tools or not "Action:" in content):
-                         # Assume done if valid content and no specific Action request
                          self.success_count += 1
                          return {
                             "success": True,
@@ -235,7 +369,8 @@ class Agent:
                             "full_log": content,
                             "agent": self.name,
                             "data": all_data,
-                            "iterations": i + 1
+                            "iterations": i + 1,
+                            "type": "react"
                         }
 
                 # Execute Tools
@@ -250,9 +385,11 @@ class Agent:
                         if self.verbose:
                             print(f"      | [ACTION] {name}({args})")
                         try:
+                            # Pass framework to tool execution if needed (e.g. for accessing llm inside tool)
                             cleaned_args = {str(k): v for k, v in args.items()} if isinstance(args, dict) else {}
                             
                             self.framework.event_bus.emit("agent:tool_call", {"agent": self.name, "tool": name, "args": args})
+                            # Using self.framework as context
                             result = await self.tools[name].execute(**cleaned_args, framework=self.framework)
                             self.framework.event_bus.emit("agent:tool_result", {"agent": self.name, "tool": name, "result": result, "success": True})
                             
@@ -267,7 +404,6 @@ class Agent:
                                     "content": str(result)
                                 })
                             else:
-                                # Fallback for legacy extraction: Use 'user' role
                                 messages.append({
                                     "role": "user",
                                     "content": f"Tool '{name}' Output: {result}"
@@ -298,7 +434,8 @@ class Agent:
                 "full_log": last_valid_response,
                 "agent": self.name,
                 "data": all_data,
-                "iterations": self.max_iterations
+                "iterations": self.max_iterations,
+                "type": "react"
             }
             
         except Exception as e:
@@ -334,13 +471,10 @@ class Agent:
         if not self.tools: return []
         
         # 1. OPTIMIZATION: Direct Regex Extraction from response text
-        # This is 100% reliable if the model follows the Action format.
-        # We look for a JSON block after the word "Action:"
         action_match = re.search(r"Action:\s*(\[.*?\])", response, re.DOTALL)
         if action_match:
             try:
                 raw_json = action_match.group(1).strip()
-                # Pre-processing to fix common LLM JSON errors (like missing quotes on keys or trailing commas)
                 raw_json = re.sub(r'\}\s*\{', '}, {', raw_json)
                 calls = json.loads(raw_json)
                 if isinstance(calls, list):

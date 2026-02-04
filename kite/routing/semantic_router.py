@@ -123,12 +123,13 @@ class SemanticRouter:
         
         return best_route, best_score
     
-    async def route(self, query: str) -> Dict:
+    async def route(self, query: str, context: Optional[Dict] = None) -> Dict:
         """
         Route query to appropriate specialist agent.
         
         Args:
             query: User query
+            context: Optional context to pass to handler
             
         Returns:
             Response dictionary with routing info
@@ -150,7 +151,14 @@ class SemanticRouter:
         
         # Route to specialist
         print(f"[OK] Routing to {route.name}")
-        response = route.handler(query)
+        if context:
+            response = route.handler(query, context)
+        else:
+            try:
+                response = route.handler(query)
+            except TypeError:
+                # Fallback if handler expects context but none provided
+                response = route.handler(query, {})
         
         # Support both sync and async handlers
         import asyncio
