@@ -1,378 +1,198 @@
-﻿"""
-CASE 1: E-COMMERCE CUSTOMER SUPPORT SYSTEM
-===========================================
-Comprehensive demonstration of core framework features.
-
-Features Demonstrated:
-[OK] Semantic Router - Intent classification and routing
-[OK] Specialized Agents - Order, Refund, Product specialists  
-[OK] Tool Registry - Custom business logic tools
-[OK] Safety Patterns - Circuit breaker, rate limiting
-[OK] Session Memory - Conversation context tracking
-[OK] Monitoring - Metrics and performance tracking
-[OK] Parallel Processing - Concurrent query handling
-
-Real-world scenario: Complete customer support system with intelligent routing,
-specialized agents, and production-ready safety patterns.
-
-Run: python examples/case1_ecommerce_support.py
-"""
-
 import os
-import sys
-import asyncio
+import json
+import logging
 import time
-from datetime import datetime
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kite import Kite
 
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger("Case1Prod")
 
-# ============================================================================
-# BUSINESS LOGIC TOOLS
-# ============================================================================
+# Initialize Kite Application
+print("Initializing Kite (Production Mode)...")
+app = Kite()
 
-# Order Management
-ORDER_DATABASE = {
-    "ORD-001": {"status": "Shipped", "delivery": "Tomorrow", "total": 299.99},
-    "ORD-002": {"status": "Processing", "delivery": "Next Week", "total": 149.99},
-    "ORD-003": {"status": "Delivered", "delivery": "Yesterday", "total": 89.99}
-}
+# 1. Enable Observability
+# This creates a 'trace.json' file logging all agent activities.
+app.enable_tracing("trace.json")
 
+# 2. Load Knowledge Base (Lightweight)
+# We load policies into memory for keyword search, avoiding heavy Vector DB/Embeddings.
+# We use the framework's native knowledge loader BUT disable vector indexing.
+policy_file = "examples/knowledge/policies.json"
+if os.path.exists(policy_file):
+    app.add_knowledge_source("local_json", policy_file, "company_policies", use_vector=True)
+else:
+    logger.warning(f"Policy file not found at {policy_file}. Policy agent may be limited.")
+
+# ==============================================================================
+# Define Tools
+# ==============================================================================
+
+@app.tool(description="Search for order details by Order ID.")
 def search_order(order_id: str):
-    """Search order status in database"""
-    order = ORDER_DATABASE.get(order_id)
-    if order:
-        return {
-            "success": True,
-            "order_id": order_id,
-            **order
-        }
-    return {"success": False, "error": "Order not found"}
-
-
-def process_refund(order_id: str, amount: float):
-    """Process refund through payment gateway"""
-    if order_id in ORDER_DATABASE:
-        return {
-            "success": True,
-            "refund_id": f"REF-{order_id}",
-            "amount": amount,
-            "status": "processed",
-            "eta": "3-5 business days"
-        }
-    return {"success": False, "error": "Invalid order ID"}
-
-
-# Inventory Management
-INVENTORY = {
-    "laptop": {"stock": 15, "price": 999.99, "category": "Electronics"},
-    "phone": {"stock": 42, "price": 699.99, "category": "Electronics"},
-    "headphones": {"stock": 0, "price": 149.99, "category": "Audio"},
-    "tablet": {"stock": 8, "price": 499.99, "category": "Electronics"}
-}
-
-def check_inventory(item: str):
-    """Check product inventory and pricing"""
-    item_lower = item.lower()
-    product = INVENTORY.get(item_lower)
-    if product:
-        return {
-            "success": True,
-            "item": item,
-            "in_stock": product["stock"] > 0,
-            "quantity": product["stock"],
-            "price": product["price"],
-            "category": product["category"]
-        }
-    return {"success": False, "error": "Product not found"}
-
-
-def cancel_subscription(user_id: str):
-    """Cancel user subscription"""
-    return {
-        "success": True,
-        "user_id": user_id,
-        "subscription_id": f"SUB-{user_id}",
-        "status": "cancelled",
-        "effective_date": "End of billing cycle"
+    """Searches the database for an order."""
+    # Mock Database
+    orders = {
+        "ORD-001": {"status": "Shipped", "items": ["Laptop"], "total": 1200.00},
+        "ORD-002": {"status": "Processing", "items": ["Mouse"], "total": 25.00},
+        "ORD-003": {"status": "Delivered", "items": ["Monitor"], "total": 300.00}
     }
+    return orders.get(order_id, "Order not found.")
 
+@app.tool(description="Process a refund for an order.")
+def process_refund(order_id: str, reason: str = "Customer request"):
+    """Refunding an order."""
+    return f"Refund processed for {order_id}. Reason: {reason}"
 
-# ============================================================================
-# MAIN DEMONSTRATION
-# ============================================================================
+@app.tool(description="Escalate to a human manager via Slack.")
+def escalate_to_human(reason: str, user_contact: str = None):
+    """Sends a message to the #manager-escalations channel in Slack."""
+    # This simulates utilizing the loaded MCP tool if available
+    slack_tool = app.tools.get("slack_post_message")
+    if slack_tool:
+        try:
+            msg = f"**Escalation Request**\nReason: {reason}\nContact: {user_contact or 'N/A'}"
+            return slack_tool.execute(channel_id="C12345", text=msg)
+        except Exception as e:
+            return f"Failed to reach Slack: {e}"
+    return f"[Mock] Escalated to manager: {reason}"
+
+@app.tool(description="Search company policies contextually.")
+def search_policies(query: str):
+    """
+    Used by the Policy Agent to find answers in the policy documents.
+    """
+    # Simple Keyword Search (No Embeddings/FAISS required)
+    # This keeps the app lightweight while still providing knowledge.
+    results = []
+    
+    # Access the loaded knowledge from the framework store
+    policy_data = app.knowledge.data.get("company_policies", {})
+    query_lower = query.lower()
+    
+    for title, content in policy_data.items():
+        # Check if query keywords match title or content
+        if any(word in title.lower() for word in query_lower.split()) or \
+           any(word in content.lower() for word in query_lower.split()):
+            results.append(f"**{title}**: {content}")
+            
+    if not results:
+        return "No specific policy found matching your query."
+    
+    return "\n\n".join(results[:3])
+
+# ==============================================================================
+# Define Agents
+# ==============================================================================
+
+@app.agent(
+    model="groq/llama-3.3-70b-versatile",
+    tools=[search_order, process_refund],
+    routes=["Where is my order?", "Track package", "I want a refund", "Order status"]
+)
+def order_support(context):
+    """
+    You are an Order Support Specialist. 
+    1. Use 'search_order' to find order details.
+    2. If the user wants a refund, check policy (optional) or just use 'process_refund'.
+    3. Be helpful and concise.
+    """
+
+@app.agent(
+    model="groq/llama-3.3-70b-versatile",
+    tools=[search_policies],
+    routes=["What is your return policy?", "Shipping info", "Warranty coverage", "Can I return this?"]
+)
+def policy_specialist(context):
+    """
+    You are a Policy Specialist.
+    ALWAYS use the 'search_policies' tool to find accurate information before answering.
+    Do not make up policies.
+    """
+
+@app.agent(
+    model="groq/llama-3.3-70b-versatile",
+    tools=[escalate_to_human],
+    routes=["I want to speak to a human", "Manager please", "Complain", "This is urgent"]
+)
+def escalation_manager(context):
+    """
+    You handle difficult situations.
+    If a user is upset or asks for a human, use 'escalate_to_human'.
+    Apologize for any inconvenience.
+    """
+
+import asyncio
+
+# ... (imports)
+
+# ... (setup code remains same)
+
+# ==============================================================================
+# Simulation
+# ==============================================================================
 
 async def main():
-    print("=" * 80)
-    print("CASE 1: E-COMMERCE CUSTOMER SUPPORT SYSTEM")
-    print("=" * 80)
-    print("\nDemonstrating: Routing, Agents, Tools, Safety, Memory, Monitoring\n")
+    print("\nSystem Online. Starting Simulation...\n")
     
-    # ========================================================================
-    # STEP 1: Initialize Framework with Safety Patterns
-    # ========================================================================
-    print("[STEP 1] Initializing framework with safety patterns...")
-    
-    ai = Kite(config={
-        "circuit_breaker_enabled": True,
-        "rate_limit_enabled": True,
-        "max_iterations": 10,
-        "semantic_router_threshold": 0.4
-    })
-    
-    print("   [OK] Framework initialized")
-    print("   [OK] Circuit breaker enabled")
-    print("   [OK] Rate limiting enabled")
-    
-    # ========================================================================
-    # STEP 2: Create Business Tools
-    # ========================================================================
-    print("\n[STEP 2] Creating business logic tools...")
-    
-    search_tool = ai.create_tool(
-        "search_order",
-        search_order,
-        "Search order status and delivery using an order ID (e.g. 'ORD-001')."
-    )
-    
-    refund_tool = ai.create_tool(
-        "process_refund",
-        process_refund,
-        "Process refund. Requires valid order_id and amount (float). Search for order first to get amount."
-    )
-    
-    inventory_tool = ai.create_tool(
-        "check_inventory",
-        check_inventory,
-        "Check product availability. Use EXACT item name mentioned (e.g. 'laptop', 'phone')."
-    )
-    
-    cancel_tool = ai.create_tool(
-        "cancel_subscription",
-        cancel_subscription,
-        "Cancel customer subscription. Search for order ID first if unknown."
-    )
-    
-    print("   [OK] Created 4 business tools")
-    print("      - Order search")
-    print("      - Refund processing")
-    print("      - Inventory check")
-    print("      - Subscription cancellation")
-    
-    # ========================================================================
-    # STEP 3: Create Specialized Agents
-    # ========================================================================
-    print("\n[STEP 3] Creating specialized support agents...")
-    
-    order_agent = ai.create_agent(
-        name="OrderSpecialist",
-        system_prompt="""You are an order support specialist.
-Help customers track orders, check delivery status, and answer shipping questions.
-Always be professional and provide accurate information from the order database.""",
-        tools=[search_tool]
-    )
-    
-    refund_agent = ai.create_agent(
-        name="RefundSpecialist",
-        system_prompt="""You are a refund specialist.
-Process refund requests, handle returns, and resolve payment issues.
-Always confirm order details before processing refunds.""",
-        tools=[search_tool, refund_tool, cancel_tool]
-    )
-    
-    product_agent = ai.create_agent(
-        name="ProductSpecialist",
-        system_prompt="""You are a product specialist.
-Help customers with product information, availability, and pricing.
-Suggest alternatives if items are out of stock.""",
-        tools=[inventory_tool]
-    )
-    
-    print("   [OK] Created 3 specialized agents")
-    print("      - OrderSpecialist (tracking & delivery)")
-    print("      - RefundSpecialist (returns & refunds)")
-    print("      - ProductSpecialist (inventory & pricing)")
-    
-    # ========================================================================
-    # STEP 4: Configure Semantic Router
-    # ========================================================================
-    print("\n[STEP 4] Configuring semantic router...")
-    
-    # Register agents with the router
-    ai.semantic_router.add_route(
-        name="order_support",
-        examples=[
-            "Where is my order?",
-            "Track my package",
-            "When will my order arrive?",
-            "Order status",
-            "Delivery information",
-            "Check order ORD-123",
-            "Where is ORD-001",
-            "package tracking",
-            "shipping update",
-            "is my order shipped?"
-        ],
-        handler=lambda q: order_agent.run(q)
-    )
-    
-    ai.semantic_router.add_route(
-        name="refund_support",
-        examples=[
-            "I want a refund",
-            "Process my return",
-            "Cancel my order",
-            "Money back",
-            "Return policy",
-            "need a refund",
-            "return this item",
-            "how to get money back?",
-            "refund status"
-        ],
-        handler=lambda q: refund_agent.run(q)
-    )
-    
-    ai.semantic_router.add_route(
-        name="product_support",
-        examples=[
-            "Is this in stock?",
-            "Product availability",
-            "How much does it cost?",
-            "Product information",
-            "Check inventory",
-            "Do you have laptops?",
-            "Is the phone available?",
-            "laptop price",
-            "phone stock count",
-            "is it available for purchase?"
-        ],
-        handler=lambda q: product_agent.run(q)
-    )
-    
-    print("   [OK] Configured 3 semantic routes")
-    print("      - Order support (tracking queries)")
-    print("      - Refund support (return queries)")
-    print("      - Product support (inventory queries)")
-    
-    # ========================================================================
-    # STEP 5: Test Customer Queries
-    # ========================================================================
-    print("\n" + "=" * 80)
-    print("TESTING CUSTOMER SUPPORT SYSTEM")
-    print("=" * 80)
-    
-    test_queries = [
-        "Where is my order ORD-001?",
-        "I want a refund for order ORD-002",
-        "Is the laptop in stock?",
-        "Cancel my subscription please",
-        "I need to cancel my subscription and get a refund for ORD-001"
+    # Sequence of interactions to demonstrate features
+    interactions = [
+        # 1. RAG Interaction
+        "What is your return policy for electronics?",
+        
+        # 2. Order Interaction (Start Session)
+        "Where is order ORD-001?",
+        
+        # 3. Contextual Follow-up (Memory Demonstration)
+        # "it" refers to ORD-001
+        "Can I return it?",
+        
+        # 4. Escalation
+        "I am very unhappy, I want to speak to a manager now!"
     ]
     
-    for i, query in enumerate(test_queries, 1):
-        print(f"\n[Query {i}/{len(test_queries)}] {query}")
-        
-        start_time = time.time()
-        
-        # Route query to appropriate agent
-        result = await ai.semantic_router.route(query)
-        
-        elapsed = time.time() - start_time
-        
-        print(f"   Route: {result['route']}")
-        print(f"   Confidence: {result['confidence']:.2%}")
-        print(f"   Response: {result.get('response', 'Processing...')}")
-        print(f"   Time: {elapsed:.2f}s")
-    
-    # ========================================================================
-    # STEP 6: Test Parallel Processing
-    # ========================================================================
-    print("\n" + "=" * 80)
-    print("TESTING PARALLEL PROCESSING")
-    print("=" * 80)
-    
-    parallel_queries = [
-        "Check order ORD-003",
-        "Is the phone available?",
-        "Process refund for ORD-001"
-    ]
-    
-    # Execute queries in parallel with a small throttle for free tier API limits
-    print(f"\n   Processing {len(parallel_queries)} queries...")
-    results = []
-    for q in parallel_queries:
-        res = await ai.semantic_router.route(q)
-        results.append(res)
-        if os.getenv("LLM_PROVIDER") == "groq":
-            await asyncio.sleep(2) # Throttle to avoid 429 concurrency limits
-    
-    elapsed = time.time() - start_time
-    
-    print(f"\n   [OK] Completed in {elapsed:.2f}s")
-    print(f"   Average: {elapsed/len(parallel_queries):.2f}s per query")
-    
-    for i, (query, result) in enumerate(zip(parallel_queries, results), 1):
-        if isinstance(result, Exception):
-            print(f"\n   Query {i}: {query}")
-            print(f"   [ERROR] Error: {result}")
-        else:
-            print(f"\n   Query {i}: {query}")
-            print(f"   Route: {result.get('route', 'unknown')}")
-    
-    # ========================================================================
-    # STEP 7: Display Metrics
-    # ========================================================================
-    print("\n" + "=" * 80)
-    print("SYSTEM METRICS")
-    print("=" * 80)
-    
-    # Agent metrics
-    print("\n[METRICS] Agent Performance:")
-    for agent_name, agent in [
-        ("Order", order_agent),
-        ("Refund", refund_agent),
-        ("Product", product_agent)
-    ]:
-        metrics = agent.get_metrics()
-        print(f"\n   {agent_name} Agent:")
-        print(f"      Calls: {metrics.get('calls', 0)}")
-        print(f"      Success Rate: {metrics.get('success_rate', 0):.1f}%")
-        print(f"      Avg Response Time: {metrics.get('avg_response_time', 0):.2f}s")
-    
-    # Router metrics
-    print("\n[STATS] Router Statistics:")
-    router_stats = ai.semantic_router.get_stats()
-    print(f"   Total Routes: {router_stats['total_routes']}")
-    print(f"   Confidence Threshold: {router_stats['confidence_threshold']:.0%}")
-    print(f"   Cache Hit Rate: {router_stats['cache_hit_rate']:.1%}")
-    
-    # Safety metrics
-    print("\n[SAFETY]  Safety Patterns:")
-    print(f"   Circuit Breaker: Active")
-    print(f"   Rate Limiting: Active")
-    print(f"   Max Iterations: {ai.config.get('max_iterations', 10)}")
-    
-    print("\n" + "=" * 80)
-    print("[OK] CASE 1 COMPLETE - E-Commerce Support System")
-    print("=" * 80)
-    print("\nKey Takeaways:")
-    print("• Semantic routing enables intelligent query classification")
-    print("• Specialized agents handle domain-specific tasks")
-    print("• Tools integrate with business logic seamlessly")
-    print("• Safety patterns ensure production reliability")
-    print("• Parallel processing improves throughput")
-    print("• Comprehensive monitoring tracks system health")
+    # We use a session ID to maintain context across this loop
+    session_id = "sim_user_123"
 
+    for query in interactions:
+        print(f"\nUser: {query}")
+        
+        # 1. Store User Input in Session Memory
+        app.session_memory.add_message("user", query)
+        
+        # 2. Get Context for Routing/Execution
+        # SessionMemory is single-session in this demo implementation
+        msgs = app.session_memory.get_messages()
+        history = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in msgs])
+        
+        # 3. Route and Execute
+        # The router uses the query to pick the agent.
+        # The agent receives the whole history as context.
+        # Check if route is async (LLMRouter is async)
+        response_data = app.semantic_router.route(query, context=history)
+        if asyncio.iscoroutine(response_data):
+            response_data = await response_data
+            
+        # 4. Store Agent Response
+        # The router returns a dict or object. LLMRouter returns dict.
+        # SemanticRouter returns RouteResult object.
+        # we need to handle both if we want to be generic, but here we know it's LLMRouter (default)
+        
+        if isinstance(response_data, dict):
+            # LLMRouter returns dict
+            resp_text = response_data.get('response')
+        else:
+            # SemanticRouter returns object
+            resp_text = response_data.response
+
+        print(f"Agent: {resp_text}")
+        app.session_memory.add_message("assistant", str(resp_text))
+        
+        time.sleep(1)
+
+    print("\n[Trace] Activities logged to trace.json")
+    print("[Done] Simulation Complete.")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n\n[WARN]  Interrupted by user")
-    except Exception as e:
-        print(f"\n\n[ERROR] Error: {e}")
-        import traceback
-        traceback.print_exc()
-
+    asyncio.run(main())

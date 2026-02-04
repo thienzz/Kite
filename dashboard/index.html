@@ -295,7 +295,7 @@
             }
 
             // Lead Discovery
-            if (event === "scraper:search_data") {
+            if (event === "scraper:search_data" || event === "scraper:post_discovered") {
                 const posts = data.posts || (data.post ? [data.post] : []);
                 posts.forEach(post => {
                     const name = post.author?.name || 'Unknown';
@@ -304,10 +304,29 @@
                         renderLeads();
                     }
                 });
-            } else if (event === 'scraper:research_update') {
+            } else if (event === 'scraper:research_update' || event === 'pipeline:lead_result') {
+                const name = data.name || 'Unknown';
+                if (leads.has(name)) {
+                    const lead = leads.get(name);
+                    lead.status = data.status;
+                    lead.analysis = data.analysis || data.reason;
+                    if (data.url) lead.author.profile_link = data.url;
+                    renderLeads();
+                } else if (event === 'pipeline:lead_result') {
+                    // Create entry if missing (for late results)
+                    leads.set(name, {
+                        author: { name: name, profile_link: data.url, title: 'LinkedIn User' },
+                        content: 'Analysis result received.',
+                        status: data.status,
+                        analysis: data.reason,
+                        timestamp
+                    });
+                    renderLeads();
+                }
+            } else if (event === "pipeline:lead_verified") {
                 if (leads.has(data.name)) {
                     const lead = leads.get(data.name);
-                    lead.status = data.status;
+                    lead.status = 'match';
                     lead.analysis = data.analysis;
                     renderLeads();
                 }
@@ -465,6 +484,10 @@
                 color = data.success ? "bg-emerald-500/10 border-emerald-500/20" : "bg-rose-500/10 border-rose-500/20";
                 icon = data.success ? "✓" : "✗";
                 content = `<span class="${data.success ? 'text-emerald-400' : 'text-rose-400'}">${data.tool} returned result</span>`;
+            } else if (event.includes("error")) {
+                color = "bg-red-500/10 border-red-500/20";
+                icon = "❌";
+                content = `<span class="text-red-400">ERROR: ${data.error || 'Unknown error'}</span>`;
             } else if (event.startsWith("pipeline:")) {
                 color = "bg-blue-500/10 border-blue-500/20";
                 icon = "⚡";

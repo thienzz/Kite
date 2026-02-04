@@ -183,6 +183,45 @@ class KnowledgeGraph:
         
         print("[OK] Knowledge Graph initialized")
     
+    def save_to_file(self, path: str):
+        """Save graph to JSON file."""
+        data = nx.node_link_data(self.graph)
+        try:
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"[OK] Graph saved to {path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save graph: {e}")
+
+    def load_from_file(self, path: str):
+        """Load graph from JSON file."""
+        if not os.path.exists(path):
+            return
+        
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            
+            self.graph = nx.node_link_graph(data)
+            
+            # Rebuild entities dict from graph nodes
+            self.entities = {}
+            self.entity_name_to_id = {}
+            for node_id, attrs in self.graph.nodes(data=True):
+                entity = Entity(
+                    id=node_id,
+                    type=attrs.get('type', 'unknown'),
+                    name=attrs.get('name', 'Unknown'),
+                    properties={k:v for k,v in attrs.items() if k not in ['type', 'name']}
+                )
+                self.entities[node_id] = entity
+                self.entity_name_to_id[entity.name.lower()] = entity.id
+                
+            print(f"[OK] Graph loaded from {path} ({len(self.entities)} entities)")
+        except Exception as e:
+            print(f"[ERROR] Failed to load graph: {e}")
+
+    
     def add_entity(self, entity: Entity):
         """Add entity to graph."""
         self.entities[entity.id] = entity
@@ -371,11 +410,15 @@ class GraphRAG:
     - Hybrid approach for best results
     """
     
-    def __init__(self, llm = None):
+    def __init__(self, llm = None, persist_path: str = None):
         self.graph = KnowledgeGraph()
         self.extractor = EntityExtractor(llm=llm)
         self.documents: Dict[str, str] = {}
+        self.persist_path = persist_path
         
+        if self.persist_path and os.path.exists(self.persist_path):
+            self.graph.load_from_file(self.persist_path)
+            
         print("[OK] GraphRAG system initialized")
     
     def add_document(self, doc_id: str, text: str):
@@ -404,6 +447,10 @@ class GraphRAG:
         
         # Add to graph
         self.graph.add_document(document)
+        
+        # Auto-save
+        if self.persist_path:
+            self.graph.save_to_file(self.persist_path)
     
     def hybrid_search(self, query: str, top_k: int = 3) -> Dict[str, Any]:
         """

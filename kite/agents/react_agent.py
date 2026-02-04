@@ -20,13 +20,14 @@ class ReActAgent(Agent):
     def __init__(self, 
                  name: str,
                  system_prompt: str,
-                 llm,
                  tools: List,
                  framework,
+                 llm=None,
                  max_iterations: int = 15,
                  kill_switch: Optional[KillSwitch] = None,
-                 knowledge_sources: List[str] = None):
-        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations, knowledge_sources=knowledge_sources)
+                 knowledge_sources: List[str] = None,
+                 verbose: bool = False):
+        super().__init__(name, system_prompt, tools, framework, llm=llm, max_iterations=max_iterations, knowledge_sources=knowledge_sources, verbose=verbose)
         self.kill_switch = kill_switch or KillSwitch(max_time=600, max_iterations=15)
         
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:
@@ -51,13 +52,15 @@ class ReActAgent(Agent):
             'data': {} # Map of tool_name -> result
         }
         
-        print(f"\n[{self.name}] Starting advanced autonomous loop for: {goal}")
+        if self.verbose:
+            print(f"\n[{self.name}] Starting advanced autonomous loop for: {goal}")
         
         while True:
             # 1. Check Kill Switch
             should_stop, reason = self.kill_switch.check(state)
             if should_stop:
-                print(f"[{self.name}] Loop terminated: {reason}")
+                if self.verbose:
+                    print(f"[{self.name}] Loop terminated: {reason}")
                 break
                 
             state['steps'] += 1
@@ -72,7 +75,8 @@ class ReActAgent(Agent):
                 actions = [h['action'].get('tool') for h in last_three]
                 status = [h['action'].get('status') for h in last_three]
                 if len(set(actions)) == 1 and all(s != 'success' for s in status):
-                    print(f"   [{self.name}] Detected loop on failed action '{actions[0]}'. Terminating.")
+                    if self.verbose:
+                        print(f"   [{self.name}] Detected loop on failed action '{actions[0]}'. Terminating.")
                     state['completed'] = False
                     state['final_answer'] = f"Loop detected on failed action: {actions[0]}"
                     break
@@ -85,11 +89,18 @@ class ReActAgent(Agent):
             })
             
             # 2. THINK & PLAN (Structured Extraction)
-            print(f"[{self.name}] Reflecting and deciding next action...")
-            prompt = self._build_structured_prompt(state)
+            if self.verbose:
+                print(f"[{self.name}] Reflecting and deciding next action...")
+            system_msg, user_msg = self._build_structured_prompt(state)
             
             try:
-                response = await self._get_llm_response(prompt)
+                # Send as a chat conversation for best instruction following
+                messages = [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg}
+                ]
+                
+                response = await self._get_llm_response(messages)
                 structured_output = self._parse_structured_output(response)
                 
                 # Support common aliases for keys
@@ -104,14 +115,20 @@ class ReActAgent(Agent):
                     "reasoning": reasoning,
                     "confidence": confidence
                 })
-                print(f"   [{self.name}] Thinking: {reasoning}")
+                if self.verbose:
+                    print(f"   [{self.name}] Thinking: {reasoning}")
                 
-                if is_final:
+                if is_final or state['steps'] >= self.max_iterations:
                     state['completed'] = True
-                    state['final_answer'] = structured_output.get('answer', 'Goal achieved.')
+                    state['final_answer'] = reasoning
+                    reason = "is_final signal" if is_final else "max_iterations reached"
+                    if self.verbose:
+                        print(f"   [{self.name}] Mission complete ({reason}). Steps: {state['steps']}")
                     self.framework.event_bus.emit("agent:complete", {
-                        "agent": self.name, 
-                        "answer": state['final_answer']
+                        "agent": self.name,
+                        "answer": state['final_answer'],
+                        "steps": state['steps'],
+                        "reason": reason
                     })
                     break
                 
@@ -129,7 +146,8 @@ class ReActAgent(Agent):
                         "tool": action_name,
                         "args": action_args
                     })
-                    print(f"   [{self.name}] Action: {action_name}({action_args})")
+                    if self.verbose:
+                        print(f"   [{self.name}] Action: {action_name}({action_args})")
                     try:
                         # Correct async-safe execution
                         result = await self.tools[action_name].execute(**action_args, framework=self.framework)
@@ -151,7 +169,8 @@ class ReActAgent(Agent):
                 
                 # Console Visibility for Observations
                 obs_preview = observation[:200].replace('\n', ' ') + "..." if len(observation) > 200 else observation
-                print(f"   [{self.name}] Observation: {obs_preview}")
+                if self.verbose:
+                    print(f"   [{self.name}] Observation: {obs_preview}")
                 
                 # 4. RECORD
                 state['history'].append({
@@ -175,12 +194,23 @@ class ReActAgent(Agent):
                 
             except Exception as e:
                 import traceback
-                print(f"[{self.name}] Error in loop: {str(e)}")
-                # traceback.print_exc() # Keep it quiet but logged for now
-                observation = f"Internal Error: {str(e)}"
+                error_type = type(e).__name__
+                error_msg = str(e) or repr(e)
+                full_error = f"{error_type}: {error_msg}"
+                
+                if self.verbose:
+                    print(f"[{self.name}] Error in loop: {full_error}")
+                # Log actual error to EventBus
+                self.framework.event_bus.emit("agent:error", {
+                    "agent": self.name,
+                    "error": full_error,
+                    "traceback": traceback.format_exc()
+                })
+                
+                observation = f"Internal Error: {full_error}"
                 state['history'].append({
                     'step': state['steps'], 
-                    'reasoning': "Self-correction: An internal error occurred.",
+                    'reasoning': f"Self-correction: An internal error occurred ({full_error}).",
                     'action': {'tool': 'recovery', 'args': {}, 'status': 'error'},
                     'observation': observation
                 })
@@ -196,7 +226,7 @@ class ReActAgent(Agent):
             "data": state['data']
         }
     
-    def _build_structured_prompt(self, state: Dict) -> str:
+    def _build_structured_prompt(self, state: Dict) -> Tuple[str, str]:
         tool_desc = ""
         for n, t in self.tools.items():
             tool_desc += f"- {n}: {t.description}\n"
@@ -204,55 +234,74 @@ class ReActAgent(Agent):
         # Build advanced reflection context (more concise)
         history_text = ""
         if state['history']:
-            history_text = "\n### Execution History (Steps Taken)\n"
-            for h in state['history']:
+            history_text = "\n### Execution History (Recap)\n"
+            # Limit history to last 15 steps to prevent token bloat
+            recent_history = state['history'][-15:]
+            for h in recent_history:
                 # Truncate observation for prompt efficiency
-                obs_summary = h['observation'][:500] + "..." if len(h['observation']) > 500 else h['observation']
-                history_text += f"\n[Step {h['step']}] Action: {h['action'].get('tool')} -> Output Summary: {obs_summary}\n"
+                obs = h['observation']
+                
+                # SMART SUMMARY: If it's a list (common for search results), show the count
+                if obs.strip().startswith('[') and obs.strip().endswith(']'):
+                    try:
+                        data = json.loads(obs)
+                        if isinstance(data, list):
+                            obs_summary = f"[Found {len(data)} items]"
+                        else:
+                            obs_summary = obs[:200].replace('\n', ' ') + "..."
+                    except:
+                        obs_summary = obs[:200].replace('\n', ' ') + "..."
+                else:
+                    obs_summary = obs[:200].replace('\n', ' ') + "..."
+                    
+                history_text += f"\nStep {h['step']}: {h['action'].get('tool')} -> {obs_summary}\n"
 
-        return f"""
-# PERSONA & CONTEXT
+        system_msg = f"""
 {self.system_prompt}
 
-## 🎯 THE MISSION (UNALTERABLE)
-Goal: {state['goal']}
+## 🏗 OUTPUT FORMAT REQUIREMENTS
+You MUST respond using ONLY the following JSON structure. 
+DO NOT simply describe your actions in text—you MUST call a tool via the JSON "tool" field or set "is_final": true.
 
-## 🧠 CURRENT KNOWLEDGE BASE
-{history_text}
-
-### EXPERT SEARCH TEMPLATES (Native Knowledge)
-{self._get_native_knowledge(state['goal'])}
-
-## 🚀 OPERATIONAL GUIDELINES:
-1. **Target Human Beings**: Your goal is to find NAMES of founders, CTOs, and specific COMPANY NEEDS. 
-2. **Beware of Ads**: Do NOT adopt marketing copy as your goal.
-3. **Efficiency**: Stop once you have 2 High-Quality leads.
-4. **ANTI-HALLUCINATION GUARD**: 
-   - NEVER invent names like 'John Doe' or 'Jane Smith' if no leads are found.
-   - NEVER invent profile or post links. If not found, report 'N/A'.
-   - NEVER use names from the Observation (like people's names or 'Unknown') as tool names.
-   - If a tool returns `[]`, YOU MUST acknowledge 'No leads found' instead of inventing them.
-   - If results are missing, suggest a better search query instead of finishing with fake data.
-
-Available Tools:
-{tool_desc}
-
-### Strict JSON Output
 {{
-  "reasoning": "Specifically analyze what was found and what is missing.",
+  "reasoning": "Specifically analyze what was found and what is missing. BE CONCISE.",
   "tool": "tool_name",
   "arguments": {{"param_name": "value"}},
   "is_final": false,
-  "answer": "Final report string (only if is_final is true)"
+  "answer": "Only provide this if is_final is true."
 }}
+
+## 🛠 Available Tools:
+{tool_desc}
 """
 
-    async def _get_llm_response(self, prompt: str) -> str:
+        user_msg = f"""
+## 🎯 CURRENT MISSION
+Goal: {state['goal']}
+Total steps taken so far: {state['steps']}
+Total tools calls made: {len([h for h in state['history'] if h['action'].get('tool') and h['action']['tool'] != 'None'])}
+
+{history_text}
+
+{self._get_native_knowledge(state['goal'])}
+
+## 🚀 YOUR NEXT ACTION:
+Choose the next tool to call or provide the final answer. Remember: If you do not provide the JSON 'tool' field, your action will NOT be executed.
+"""
+        return system_msg, user_msg
+
+    async def _get_llm_response(self, messages: List[Dict]) -> str:
         stop_tokens = ["\nObservation:", "\nThought:", "\nAction:", "\nStep"]
+        # Use chat_async if available, as it's better for Instruct models
+        if hasattr(self.llm, 'chat_async'):
+            return await self.llm.chat_async(messages, temperature=0.1, stop=stop_tokens, format="json")
+        
+        # Fallback to single string if provider doesn't support chat
+        full_text = "\n\n".join([f"### {m['role'].upper()}\n{m['content']}" for m in messages])
         if hasattr(self.llm, 'complete_async'):
-            return await self.llm.complete_async(prompt, temperature=0.1, stop=stop_tokens)
+            return await self.llm.complete_async(full_text, temperature=0.1, stop=stop_tokens)
         import asyncio
-        return await asyncio.to_thread(self.llm.complete, prompt, temperature=0.1, stop=stop_tokens)
+        return await asyncio.to_thread(self.llm.complete, full_text, temperature=0.1, stop=stop_tokens)
 
     def _clean_json(self, s: str) -> str:
         """Handle common LLM JSON formatting errors."""
@@ -260,6 +309,9 @@ Available Tools:
         # Remove markdown code blocks
         s = re.sub(r'```json\s*(.*?)\s*```', r'\1', s, flags=re.DOTALL)
         s = re.sub(r'```\s*(.*?)\s*```', r'\1', s, flags=re.DOTALL)
+        
+        # Remove DeepSeek-style thought blocks
+        s = re.sub(r'<think>.*?</think>', '', s, flags=re.DOTALL)
         
         # Balance braces if truncated
         open_braces = s.count('{')
@@ -328,21 +380,56 @@ Available Tools:
             return {"reasoning": f"Parse Error: {str(e)}. Try to strictly follow the JSON output format.", "is_final": False}
 
     def _get_native_knowledge(self, goal: str) -> str:
-        """Fetch relevant expert templates from framework knowledge."""
+        """Fetch expert templates from all authorized knowledge sources."""
         if not hasattr(self.framework, 'knowledge'):
             return "No knowledge store available."
             
-        expert_queries = self.framework.knowledge.get("linkedin_queries")
-        if not expert_queries:
-            return "No expert templates found."
+        if not self.knowledge_sources:
+            return "No authorized knowledge sources for this agent."
             
-        relevant = []
-        for key, val in expert_queries.items():
-            # Match goal or name
-            if key.lower() in goal.lower() or key.lower() in self.name.lower():
-                relevant.append(f"- Expert '{key}' Query: {val}")
+        knowledge_text = ""
+        for source_name in self.knowledge_sources:
+            data = self.framework.knowledge.get(source_name)
+            if not data:
+                continue
+                
+            matched = []
+            categories = []
+            for key, val in data.items():
+                categories.append(key)
+                
+                # Robust matching: handle underscores, hyphens, and semantic overlaps
+                norm_key = key.lower().replace("_", " ")
+                norm_goal = goal.lower().replace("-", " ")
+                
+                # Check for direct inclusion or word overlap
+                is_match = norm_key in norm_goal or norm_goal in norm_key
+                if not is_match:
+                    # check if any major word from key is in goal (minimum 3 chars)
+                    key_words = [w for w in norm_key.split() if len(w) >= 3]
+                    if any(w in norm_goal for w in key_words):
+                        is_match = True
+
+                if is_match:
+                    if isinstance(val, list):
+                        val_str = "\n  ".join([f'- {v}' for v in val])
+                    else:
+                        val_str = str(val)
+                    matched.append(f"### {key.replace('_', ' ').upper()}:\n  {val_str}")
+            
+            if matched:
+                # Increase limit to 10 to allow more breadth for complex missions
+                if len(matched) > 10:
+                     matched = matched[:10]
+                knowledge_text += f"\n## 🧠 KNOWLEDGE BASE ({source_name}):\n"
+                knowledge_text += "\n\n".join(matched) + "\n"
+            
+            # Always provide a list of all categories to encourage the agent to explore
+            knowledge_text += f"\n## 📂 ALL EXPERTISE CATEGORIES ({source_name}):\n"
+            knowledge_text += f"Available: {', '.join(categories)}. "
+            knowledge_text += "You are encouraged to use queries from any of these if the current ones fail.\n"
         
-        return "\n".join(relevant) if relevant else "No specific expert templates matched this mission."
+        return knowledge_text if knowledge_text else "No expert templates found."
 
     def _format_observation(self, result: Any) -> str:
         if isinstance(result, (dict, list)):
