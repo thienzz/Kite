@@ -292,10 +292,10 @@ class Kite:
                         llm_provider,
                         self.config.get('llm_model'),
                         api_key=api_key,
-                        timeout=self.config.get('llm_timeout', 180.0)
+                        timeout=self.config.get('llm_timeout', 600.0)
                     )
                 else:
-                    self._llm = LLMFactory.auto_detect()
+                    self._llm = LLMFactory.auto_detect(timeout=self.config.get('llm_timeout', 600.0))
             except Exception as e:
                 self.logger.warning(f"    LLM initialization failed: {e}")
                 self._llm = LLMFactory.auto_detect()
@@ -481,6 +481,19 @@ class Kite:
         """Generate embeddings for multiple texts."""
         return self.embeddings.embed_batch(texts)
     
+    def create_tool(self, name: str, func: Callable, description: str = None) -> Any:
+        """Create and register a tool."""
+        from .tool import Tool
+        
+        tool_desc = description or func.__doc__ or "No description"
+        tool = Tool(
+            name=name,
+            func=func,
+            description=tool_desc
+        )
+        self.tools.register(name, tool)
+        return tool
+
     def create_agent(self, 
                      name: str, 
                      system_prompt: str, 
@@ -493,7 +506,7 @@ class Kite:
                      verbose: bool = False):
         """
         Create custom agent with optional specific AI configuration.
-        Supported types: 'base', 'react', 'plan_execute', 'rewoo', 'tot'
+        Supported types: 'simple' (one-shot), 'react' (looping), 'plan_execute', 'rewoo', 'tot'
         """
         from .agent import Agent
         from .agents.react_agent import ReActAgent
@@ -535,7 +548,9 @@ class Kite:
             from .agents.reflective_agent import ReflectiveAgent
             return ReflectiveAgent(name, system_prompt, tools=tools_list, framework=self, llm=agent_llm, verbose=verbose)
             
-        return Agent(name, system_prompt, tools=tools_list, framework=self, llm=agent_llm, max_iterations=max_iter, knowledge_sources=knowledge_sources, verbose=verbose)
+        # Default to simple Agent
+        mode = "react" if agent_type == "react" else "simple"
+        return Agent(name, system_prompt, tools=tools_list, framework=self, llm=agent_llm, max_iterations=max_iter, knowledge_sources=knowledge_sources, verbose=verbose, agent_type=mode)
     
     def create_react_agent(self, 
                            name: str, 
@@ -680,32 +695,6 @@ class Kite:
             critic_prompt=critic_prompt,
             max_reflections=max_reflections
         )
-    
-    def create_conversation(self, agents: List[Any], max_turns: int = 10, termination_condition: str = "consensus"):
-        """Create a multi-agent conversation."""
-        from .conversation import ConversationManager
-        return ConversationManager(
-            agents=agents,
-            framework=self,
-            max_turns=max_turns,
-            termination_condition=termination_condition
-        )
-
-    def create_tool(self, name: str, func: Callable, description: str):
-        """Create and register custom tool."""
-        from .tool import Tool
-        tool = Tool(name, func, description)
-        self.tools.register(name, tool)
-        return tool
-    
-    def create_workflow(self, name: str):
-        """Create a deterministic workflow."""
-        return self.pipeline.create(name, event_bus=self.event_bus)
-    
-    def create_reactive_workflow(self, name: str):
-        """Create a reactive, streaming workflow."""
-        from .pipeline import ReactivePipeline
-        return ReactivePipeline(name, event_bus=self.event_bus)
     
     def create_conversation(self, 
                             agents: List["Agent"], 

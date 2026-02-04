@@ -27,7 +27,7 @@ class ReActAgent(Agent):
                  kill_switch: Optional[KillSwitch] = None,
                  knowledge_sources: List[str] = None,
                  verbose: bool = False):
-        super().__init__(name, system_prompt, tools, framework, llm=llm, max_iterations=max_iterations, knowledge_sources=knowledge_sources, verbose=verbose)
+        super().__init__(name, system_prompt, tools, framework, llm=llm, max_iterations=max_iterations, knowledge_sources=knowledge_sources, verbose=verbose, agent_type="react")
         self.kill_switch = kill_switch or KillSwitch(max_time=600, max_iterations=15)
         
     async def run(self, user_input: str, context: Optional[Dict] = None) -> Dict:

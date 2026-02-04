@@ -21,19 +21,25 @@ wheels/
 *.egg
 MANIFEST
 
-# Virtual Environments
+# Virtual environments
+.venv/
 venv/
 ENV/
 env/
-.venv
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
 # Environment variables
 .env
@@ -42,61 +48,20 @@ env/
 
 # Logs
 *.log
-logs/
-*.log.*
 
-# Database
+# Database files
 *.db
 *.sqlite
 *.sqlite3
 
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-coverage.xml
-*.cover
-
-# Jupyter Notebooks
-.ipynb_checkpoints
-*.ipynb
-
-# Model files (too large for git)
-*.pkl
-*.h5
-*.pt
-*.pth
-*.onnx
-models/
-
-# Vector DB data
-chroma_db/
-faiss_index/
-vector_store/
-
 # Temporary files
 *.tmp
-*.temp
-tmp/
-temp/
+analytics_demo.db
 
-# API Keys and Secrets
-secrets.yaml
-credentials.json
-*.pem
-*.key
-
-# Build artifacts
-*.pyc
-*.pyo
-*.so
-*.dll
-*.exe
-
-# Documentation build
+# Documentation builds
 docs/_build/
 site/
+<<<<<<< HEAD
 
 # OS
 Thumbs.db
@@ -118,3 +83,6 @@ checkpoints/
 *~
 /vector_db
 /knowledge
+=======
+vector_db/
+>>>>>>> origin/main

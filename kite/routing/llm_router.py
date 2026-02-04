@@ -34,7 +34,7 @@ class LLMRouter:
         )
         print(f"[OK] Added LLM route: {name}")
 
-    async def route(self, query: str, context: Optional[str] = None) -> Dict:
+    async def route(self, query: str, context: Optional[Dict] = None) -> Dict:
         """Route query to appropriate specialist agent using LLM."""
         if not self.routes:
             raise RuntimeError("No routes configured in LLMRouter")
@@ -92,6 +92,7 @@ Respond ONLY with a JSON object:
             except TypeError:
                  # Fallback for handlers that don't accept context
                 resp = route.handler(query)
+
             if asyncio.iscoroutine(resp):
                 resp = await resp
             
