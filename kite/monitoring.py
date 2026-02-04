@@ -21,6 +21,17 @@ try:
 except ImportError:
     PROMETHEUS_AVAILABLE = False
 
+# Cost per 1k tokens (Input, Output)
+MODEL_COSTS = {
+    "gpt-4": (0.03, 0.06),
+    "gpt-3.5-turbo": (0.0005, 0.0015),
+    "claude-3-opus": (0.015, 0.075),
+    "claude-3-sonnet": (0.003, 0.015),
+    "claude-3-haiku": (0.00025, 0.00125),
+    "deepseek-r1:14b": (0.0, 0.0), # Local
+    "ollama": (0.0, 0.0),
+    "default": (0.0, 0.0)
+}
 
 class MetricsCollector:
     """
@@ -44,7 +55,11 @@ class MetricsCollector:
             'total_latency': 0,
             'min_latency': float('inf'),
             'max_latency': 0,
-            'outcomes': defaultdict(int)
+            'max_latency': 0,
+            'outcomes': defaultdict(int),
+            'tokens_in': 0,
+            'tokens_out': 0,
+            'cost': 0.0
         })
         
         self.lock = threading.RLock()
@@ -225,6 +240,22 @@ class MetricsCollector:
                     provider=provider,
                     model=model
                 ).inc(cost)
+
+        # In-memory tracking
+        key = f"llm_usage.{model}"
+        with self.lock:
+             data = self.metrics[key]
+             data['count'] += 1
+             data['tokens_in'] += prompt_tokens
+             data['tokens_out'] += completion_tokens
+             
+             # Calculate cost if not provided
+             if cost == 0:
+                 rates = MODEL_COSTS.get(model, MODEL_COSTS.get(model.split(':')[0], MODEL_COSTS['default']))
+                 estimated_cost = (prompt_tokens / 1000 * rates[0]) + (completion_tokens / 1000 * rates[1])
+                 data['cost'] += estimated_cost
+             else:
+                 data['cost'] += cost
     
     def record_memory_operation(self, mem_type: str, operation: str):
         """Record memory operation."""
@@ -315,7 +346,12 @@ class MetricsCollector:
             for key, data in sorted(self.metrics.items()):
                 avg_l = data['total_latency'] / data['count'] if data['count'] > 0 else 0
                 outcomes_str = ", ".join([f"{k}:{v}" for k, v in data['outcomes'].items()])
-                report.append(f"{key:<20} | {data['count']:<6} | {data['errors']:<6} | {avg_l:<10.3f}s | {outcomes_str}")
+                
+                # Special formatting for LLM usage
+                if key.startswith("llm_usage"):
+                    report.append(f"{key:<30} | {data['count']:<6} | {data['tokens_in']} in / {data['tokens_out']} out | ${data['cost']:.4f}")
+                else:
+                    report.append(f"{key:<20} | {data['count']:<6} | {data['errors']:<6} | {avg_l:<10.3f}s | {outcomes_str}")
             
             report.append("="*60 + "\n")
             return "\n".join(report)

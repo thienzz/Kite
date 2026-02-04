@@ -24,8 +24,9 @@ class LLMRouter:
         self.routes: Dict[str, LLMRoute] = {}
         self.llm = llm
         
-    def add_route(self, name: str, examples: List[str] | str = None, description: str = "", handler: Callable = None):
-        """Add a new route. Examples are kept for prompt context but not used for embeddings."""
+    def add_route(self, name: str, examples: List[str] | str = None, samples: List[str] | str = None, description: str = "", handler: Callable = None):
+        """Add a new route. Examples serve as context. 'samples' is an alias for 'examples'."""
+        final_examples = examples or samples
         self.routes[name] = LLMRoute(
             name=name,
             description=description or f"Handle queries related to {name}",
@@ -33,7 +34,7 @@ class LLMRouter:
         )
         print(f"[OK] Added LLM route: {name}")
 
-    async def route(self, query: str) -> Dict:
+    async def route(self, query: str, context: Optional[str] = None) -> Dict:
         """Route query to appropriate specialist agent using LLM."""
         if not self.routes:
             raise RuntimeError("No routes configured in LLMRouter")
@@ -85,7 +86,12 @@ Respond ONLY with a JSON object:
             route = self.routes[category]
             print(f"[OK] Routing to {route.name}")
             
-            resp = route.handler(query)
+            # Use context if provided
+            try:
+                resp = route.handler(query, context)
+            except TypeError:
+                 # Fallback for handlers that don't accept context
+                resp = route.handler(query)
             if asyncio.iscoroutine(resp):
                 resp = await resp
             

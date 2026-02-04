@@ -85,10 +85,16 @@ async def create_linkedin_session(session_path: str = "linkedin_session.json", *
 def _resolve_session_path(provided_path: str) -> Optional[str]:
     """Robust resolution for session file in multiple locations."""
     # 1. Project Root (Preferred)
-    root_path = "/home/thien/Kite/linkedin_session_v2.json"
+    cwd = os.getcwd()
+    root_path = os.path.join(cwd, "linkedin_session_v2.json")
     if os.path.exists(root_path): return root_path
     if os.path.exists(provided_path): return provided_path
-    fallbacks = ["linkedin_session_v2.json", "linkedin_session.json", "/home/thien/Kite/linkedin_session.json"]
+    
+    fallbacks = [
+        "linkedin_session_v2.json", 
+        "linkedin_session.json", 
+        os.path.join(cwd, "linkedin_session.json")
+    ]
     for f in fallbacks:
         if os.path.exists(f): return f
     return None

@@ -14,8 +14,8 @@ class TreeOfThoughtsAgent(Agent):
     Explores multiple reasoning paths and selects the best one.
     """
     
-    def __init__(self, name, system_prompt, llm, tools, framework, max_iterations=3, branches=3):
-        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations)
+    def __init__(self, name, system_prompt, tools, framework, llm=None, max_iterations=3, branches=3, verbose=False):
+        super().__init__(name, system_prompt, tools, framework, llm=llm, max_iterations=max_iterations, verbose=verbose)
         self.branches = branches
 
     async def run(self, problem: str, context: Optional[Dict] = None) -> Dict[str, Any]:

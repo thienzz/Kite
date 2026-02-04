@@ -111,26 +111,31 @@ class ReactivePipeline:
                     })
 
                 # Execute function
-                if inspect.iscoroutinefunction(stage.func):
+                if inspect.isasyncgenfunction(stage.func):
+                    # Handle async generator for streaming
+                    async for result in stage.func(item):
+                        if stage.output_queue and result is not None:
+                            if isinstance(result, list):
+                                for sub_item in result:
+                                    await stage.output_queue.put(sub_item)
+                            else:
+                                await stage.output_queue.put(result)
+                elif inspect.iscoroutinefunction(stage.func):
                     result = await stage.func(item)
+                    if stage.output_queue and result is not None:
+                        if isinstance(result, list):
+                            for sub_item in result:
+                                await stage.output_queue.put(sub_item)
+                        else:
+                            await stage.output_queue.put(result)
                 else:
                     result = stage.func(item)
-
-                if self.event_bus:
-                    self.event_bus.emit("pipeline:step", {
-                        "pipeline": self.name,
-                        "task_id": task_id,
-                        "step": stage.name,
-                        "result": str(result)[:200]
-                    })
-
-                # Pass to next stage if it exists and result is not None
-                if stage.output_queue and result is not None:
-                    if isinstance(result, list):
-                        for sub_item in result:
-                            await stage.output_queue.put(sub_item)
-                    else:
-                        await stage.output_queue.put(result)
+                    if stage.output_queue and result is not None:
+                        if isinstance(result, list):
+                            for sub_item in result:
+                                await stage.output_queue.put(sub_item)
+                        else:
+                            await stage.output_queue.put(result)
 
             except Exception as e:
                 self.logger.error(f"Error in stage {stage.name}: {e}")

@@ -30,7 +30,13 @@ class BaseLLMProvider(ABC):
     
     @abstractmethod
     def complete(self, prompt: str, **kwargs) -> str:
-        """Generate completion."""
+        """
+        Generate completion.
+        
+        Args:
+            prompt: Input text.
+            response_schema: Optional Dict/Schema to enforce JSON output.
+        """
         pass
     
     @abstractmethod
@@ -113,7 +119,7 @@ class OllamaProvider(BaseLLMProvider):
     
     def _sanitize_ollama_params(self, kwargs: Dict) -> Dict:
         """Helper to ensure only valid Ollama parameters are sent."""
-        valid_top_level = {'model', 'prompt', 'messages', 'stream', 'format', 'options', 'keep_alive'}
+        valid_top_level = {'model', 'prompt', 'messages', 'stream', 'format', 'options', 'keep_alive', 'tools'}
         # Common model options that should go into 'options' dict
         valid_options = {
             'num_keep', 'seed', 'num_predict', 'top_k', 'top_p', 'tfs_z', 
@@ -135,6 +141,19 @@ class OllamaProvider(BaseLLMProvider):
                 
         if options:
             sanitized['options'] = options
+            
+        # Handle Structured Output (JSON Schema)
+        if 'response_schema' in kwargs:
+            sanitized['format'] = 'json'
+            schema = kwargs['response_schema']
+            # We don't send 'response_schema' to Ollama API directly yet (unless using new features)
+            # Instead, we rely on the prompt to include the schema instructions, 
+            # OR we can inject it here if validation logic existed.
+            # For now, we mainly ensure format='json' is set.
+            # If the user didn't put the schema in the prompt, we might want to append it?
+            # Let's trust the caller to put instructions in the prompt, OR append it if simple dict.
+            pass
+
         return sanitized
 
     def complete(self, prompt: str, **kwargs) -> str:
@@ -160,13 +179,22 @@ class OllamaProvider(BaseLLMProvider):
         h_thread.start()
         
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            timeout = httpx.Timeout(self.timeout, read=None)
+            with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     f"{self.base_url}/api/generate",
                     json=params
                 )
                 data = response.json()
                 if "response" in data:
+                    # Record usage if metrics provided
+                    if kwargs.get("metrics"):
+                        kwargs["metrics"].record_llm_usage(
+                            provider="ollama",
+                            model=self.model,
+                            prompt_tokens=data.get("prompt_eval_count", 0),
+                            completion_tokens=data.get("eval_count", 0)
+                        )
                     return data["response"]
                 elif "message" in data and "content" in data["message"]:
                     return data["message"]["content"]
@@ -193,7 +221,8 @@ class OllamaProvider(BaseLLMProvider):
                 if not task.done():
                     self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        timeout = httpx.Timeout(self.timeout, read=None)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             request_task = asyncio.create_task(client.post(
                 f"{self.base_url}/api/generate",
                 json=params
@@ -202,12 +231,24 @@ class OllamaProvider(BaseLLMProvider):
             
             try:
                 response = await request_task
+                response.raise_for_status()
                 data = response.json()
                 if "response" in data:
-                    return data["response"]
+                    res = data["response"]
                 elif "message" in data and "content" in data["message"]:
-                    return data["message"]["content"]
-                raise KeyError(f"Unexpected Ollama response format: {data}")
+                    res = data["message"]["content"]
+                else:
+                    raise KeyError(f"Unexpected Ollama response format: {data}")
+                
+                # Handle 'load' reason - means Ollama just loaded the model and didn't generate
+                if not res and data.get("done") and data.get("done_reason") == "load":
+                    self.logger.warning(f"Ollama returned 'load' reason. Retrying in 2s...")
+                    await asyncio.sleep(2)
+                    return await self.complete_async(prompt, **kwargs)
+
+                if not res or res.strip() == "":
+                    raise ValueError(f"Ollama returned empty response for model {self.model}")
+                return res
             finally:
                 heartbeat_task.cancel()
     
@@ -223,6 +264,16 @@ class OllamaProvider(BaseLLMProvider):
             **kwargs
         })
         
+        # Inject Schema into System Prompt if provided and format is JSON
+        if kwargs.get("response_schema") and params.get("format") == "json":
+            schema_str = json.dumps(kwargs["response_schema"], indent=2)
+            sys_msg = f"\n\nIMPORTANT: Output data MUST be valid JSON matching this schema:\n{schema_str}"
+            # Check if first message is system
+            if params["messages"] and params["messages"][0]["role"] == "system":
+                params["messages"][0]["content"] += sys_msg
+            else:
+                params["messages"].insert(0, {"role": "system", "content": f"You are a helpful assistant.{sys_msg}"})
+        
         stop_heartbeat = threading.Event()
         def heartbeat():
             start = time.time()
@@ -233,7 +284,8 @@ class OllamaProvider(BaseLLMProvider):
         h_thread.start()
         
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            timeout = httpx.Timeout(self.timeout, read=None)
+            with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     f"{self.base_url}/api/chat",
                     json=params
@@ -242,8 +294,22 @@ class OllamaProvider(BaseLLMProvider):
                     self.logger.error(f"Ollama Chat Error {response.status_code}: {response.text}")
                 
                 data = response.json()
-                if "message" in data and "content" in data["message"]:
-                    return data["message"]["content"]
+                data = response.json()
+                if "message" in data:
+                    # Record usage if metrics provided (chat endpoint usually includes it in final response)
+                    if kwargs.get("metrics"):
+                        kwargs["metrics"].record_llm_usage(
+                            provider="ollama",
+                            model=self.model,
+                            prompt_tokens=data.get("prompt_eval_count", 0),
+                            completion_tokens=data.get("eval_count", 0)
+                        )
+                        
+                    msg = data["message"]
+                    if msg.get("tool_calls"):
+                        return {"content": msg.get("content"), "tool_calls": msg["tool_calls"]}
+                    if "content" in msg:
+                        return msg["content"]
                 elif "response" in data:
                     return data["response"]
                 raise KeyError(f"Unexpected Ollama chat response format: {data}")
@@ -260,6 +326,15 @@ class OllamaProvider(BaseLLMProvider):
             "stream": False,
             **kwargs
         })
+
+        # Inject Schema into System Prompt if provided and format is JSON
+        if kwargs.get("response_schema") and params.get("format") == "json":
+            schema_str = json.dumps(kwargs["response_schema"], indent=2)
+            sys_msg = f"\n\nIMPORTANT: Output data MUST be valid JSON matching this schema:\n{schema_str}"
+            if params["messages"] and params["messages"][0]["role"] == "system":
+                params["messages"][0]["content"] += sys_msg
+            else:
+                params["messages"].insert(0, {"role": "system", "content": f"You are a helpful assistant.{sys_msg}"})
         
         async def heartbeat(task):
             start = time.time()
@@ -268,7 +343,8 @@ class OllamaProvider(BaseLLMProvider):
                 if not task.done():
                     self.logger.info(f"Ollama is still thinking... ({int(time.time() - start)}s elapsed)")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        timeout = httpx.Timeout(self.timeout, read=None)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             request_task = asyncio.create_task(client.post(
                 f"{self.base_url}/api/chat",
                 json=params
@@ -278,14 +354,46 @@ class OllamaProvider(BaseLLMProvider):
             try:
                 response = await request_task
                 if response.status_code != 200:
-                    self.logger.error(f"Ollama Chat Async Error {response.status_code}: {response.text}")
-                    
+                    error_text = response.text
+                    self.logger.error(f"Ollama Chat Async Error {response.status_code}: {error_text}")
+                    response.raise_for_status()
+                
                 data = response.json()
-                if "message" in data and "content" in data["message"]:
-                    return data["message"]["content"]
+                res = None
+                data = response.json()
+                res = None
+                if "message" in data:
+                    # Record usage if metrics provided
+                    if kwargs.get("metrics"):
+                        kwargs["metrics"].record_llm_usage(
+                            provider="ollama",
+                            model=self.model,
+                            prompt_tokens=data.get("prompt_eval_count", 0),
+                            completion_tokens=data.get("eval_count", 0)
+                        )
+                        
+                    msg = data["message"]
+                    if msg.get("tool_calls"):
+                        # Return dict if tool calls exist
+                        res = {"content": msg.get("content"), "tool_calls": msg["tool_calls"]}
+                    elif "content" in msg:
+                        res = msg["content"]
                 elif "response" in data:
-                    return data["response"]
-                raise KeyError(f"Unexpected Ollama chat response format: {data}")
+                    res = data["response"]
+                
+                # Handle 'load' reason
+                if not res and data.get("done") and data.get("done_reason") == "load":
+                    self.logger.warning(f"Ollama returned 'load' reason in chat. Retrying in 2s...")
+                    await asyncio.sleep(2)
+                    return await self.chat_async(messages, **kwargs)
+
+                if res is None:
+                     raise ValueError(f"Ollama returned empty response for chat model {self.model}")
+                     
+                if isinstance(res, str) and res.strip() == "":
+                     raise ValueError(f"Ollama returned empty string response for chat model {self.model}")
+                
+                return res
             finally:
                 heartbeat_task.cancel()
     
@@ -391,12 +499,25 @@ class LMStudioProvider(BaseLLMProvider):
         )
         return response.choices[0].text
     
+    def _sanitize_params(self, kwargs: Dict) -> Dict:
+        """Translate Kite params (format='json') to LM Studio (response_format)."""
+        clean = {}
+        # LM Studio is OpenAI compatible
+        valid = {'temperature', 'max_tokens', 'top_p', 'stream', 'stop', 'response_format', 'seed'}
+        for k, v in kwargs.items():
+            if k == 'format' and v == 'json':
+                clean['response_format'] = {"type": "json_object"}
+            elif k in valid:
+                clean[k] = v
+        return clean
+
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
+        params = self._sanitize_params(kwargs)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
-            **kwargs
+            **params
         )
         return response.choices[0].message.content
     
@@ -410,11 +531,12 @@ class LMStudioProvider(BaseLLMProvider):
     
     async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.completions.create(
             model=self.model,
             prompt=prompt,
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].text:
@@ -422,11 +544,12 @@ class LMStudioProvider(BaseLLMProvider):
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if hasattr(chunk, 'choices') and chunk.choices and chunk.choices[0].delta.content:
@@ -540,11 +663,29 @@ class MockLLMProvider(BaseLLMProvider):
         return f"Mock response to: {prompt[:50]}..."
     
     def chat(self, messages: List[Dict], **kwargs) -> str:
+        # Simple mock logic for tool testing
+        last_msg = messages[-1]["content"]
+        if "ORD-001" in last_msg and kwargs.get("tools"):
+             # Simulate tool calling for tracking
+             return {
+                 "content": "",
+                 "tool_calls": [{
+                     "function": {
+                         "name": "search_order",
+                         "arguments": '{"order_id": "ORD-001"}'
+                     }
+                 }]
+             }
+        
         return "Mock chat response: I'm here to help with your agentic tasks!"
     
     def embed(self, text: str) -> List[float]:
         import random
         return [random.random() for _ in range(1536)]
+    
+    async def chat_async(self, messages: List[Dict], **kwargs):
+        """Async mock chat."""
+        return self.chat(messages, **kwargs)
     
     async def stream_complete(self, prompt: str, **kwargs):
         yield f"Mock stream response to: {prompt[:20]}..."
@@ -588,6 +729,19 @@ class GroqProvider(BaseLLMProvider):
             self.logger.info(f"[OK] Groq connected: {model}")
         except ImportError:
             raise ImportError("pip install groq")
+            
+    def _sanitize_params(self, kwargs: Dict) -> Dict:
+        """Translate Kite params (format='json') to Groq/OpenAI (response_format)."""
+        clean = {}
+        # Valid Groq params
+        valid = {'temperature', 'max_tokens', 'top_p', 'stream', 'stop', 'response_format', 'seed', 'tools', 'tool_choice'}
+        
+        for k, v in kwargs.items():
+            if k == 'format' and v == 'json':
+                clean['response_format'] = {"type": "json_object"}
+            elif k in valid:
+                clean[k] = v
+        return clean
     
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate completion."""
@@ -596,20 +750,42 @@ class GroqProvider(BaseLLMProvider):
     @retry(wait=wait_exponential(multiplier=1, min=4, max=60), stop=stop_after_attempt(5), reraise=True)
     def chat(self, messages: List[Dict], **kwargs) -> str:
         """Chat completion."""
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **kwargs
-        )
-        return response.choices[0].message.content
+        params = self._sanitize_params(kwargs)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **params
+            )
+        except Exception as e:
+            self.logger.error(f"Groq Chat Error: {e}")
+            raise
+        
+        msg = response.choices[0].message
+        if msg.tool_calls:
+            # Convert objects to dicts for Agent.run
+            tool_calls = []
+            for tc in msg.tool_calls:
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+            return {"content": msg.content, "tool_calls": tool_calls}
+            
+        return msg.content
     
     async def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if chunk.choices[0].delta.content:
@@ -617,11 +793,12 @@ class GroqProvider(BaseLLMProvider):
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if chunk.choices[0].delta.content:
@@ -789,6 +966,19 @@ class OpenAIProvider(BaseLLMProvider):
             self._test_connection()
         except Exception as e:
             raise ConnectionError(f"OpenAI failed: {e}")
+
+    def _sanitize_params(self, kwargs: Dict) -> Dict:
+        """Translate Kite params (format='json') to OpenAI (response_format)."""
+        clean = {}
+        # Valid OpenAI params
+        valid = {'temperature', 'max_tokens', 'top_p', 'stream', 'stop', 'response_format', 'seed', 'n', 'presence_penalty', 'frequency_penalty'}
+        
+        for k, v in kwargs.items():
+            if k == 'format' and v == 'json':
+                clean['response_format'] = {"type": "json_object"}
+            elif k in valid:
+                clean[k] = v
+        return clean
             
     def _test_connection(self):
         """Test OpenAI connection (auth check)."""
@@ -806,10 +996,11 @@ class OpenAIProvider(BaseLLMProvider):
             import openai
             self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
         
+        params = self._sanitize_params(kwargs)
         response = await self.async_client.chat.completions.create(
             model=self.model,
             messages=messages,
-            **kwargs
+            **params
         )
         return response.choices[0].message.content
 
@@ -821,10 +1012,11 @@ class OpenAIProvider(BaseLLMProvider):
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
     
     def chat(self, messages: List[Dict], **kwargs) -> str:
+        params = self._sanitize_params(kwargs)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
-            **kwargs
+            **params
         )
         return response.choices[0].message.content
     
@@ -837,11 +1029,12 @@ class OpenAIProvider(BaseLLMProvider):
         
     def stream_complete(self, prompt: str, **kwargs):
         """Stream completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.completions.create(
             model=self.model,
             prompt=prompt,
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if chunk.choices[0].text:
@@ -849,11 +1042,12 @@ class OpenAIProvider(BaseLLMProvider):
 
     def stream_chat(self, messages: List[Dict], **kwargs):
         """Stream chat completion."""
+        params = self._sanitize_params(kwargs)
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
-            **kwargs
+            **params
         )
         for chunk in stream:
             if chunk.choices[0].delta.content:

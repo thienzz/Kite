@@ -24,8 +24,8 @@ class PlanExecuteAgent(Agent):
     3. Re-plan: Adjust remaining steps if needed.
     """
     
-    def __init__(self, name, system_prompt, llm, tools, framework, max_iterations=10):
-        super().__init__(name, system_prompt, llm, tools, framework, max_iterations=max_iterations)
+    def __init__(self, name, system_prompt, tools, framework, llm=None, max_iterations=10, verbose=False):
+        super().__init__(name, system_prompt, tools, framework, llm=llm, max_iterations=max_iterations, verbose=verbose)
 
     async def run(self, goal: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """Override base run to use plan-and-execute logic for this agent."""
