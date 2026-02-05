@@ -27,6 +27,8 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================================
 
+
+
 @dataclass
 class SlackConfig:
     """Configuration for Slack MCP server."""
@@ -45,136 +47,6 @@ class SlackConfig:
 
 
 # ============================================================================
-# MOCK SLACK CLIENT (Replace with real slack_sdk in production)
-# ============================================================================
-
-class MockSlackClient:
-    """
-    Mock Slack client for demonstration.
-    
-    In production, use:
-    from slack_sdk import WebClient
-    client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
-    """
-    
-    def __init__(self, token: str):
-        self.token = token
-        self.messages_db = {}
-        self.users_db = {
-            "U123": {"id": "U123", "name": "John Doe", "email": "john@company.com"},
-            "U456": {"id": "U456", "name": "Jane Smith", "email": "jane@company.com"},
-        }
-        self.channels_db = {
-            "C001": {"id": "C001", "name": "general", "topic": "General discussions"},
-            "C002": {"id": "C002", "name": "engineering", "topic": "Engineering team"},
-            "C003": {"id": "C003", "name": "support", "topic": "Customer support"},
-        }
-        
-        # Seed some messages
-        self._seed_messages()
-    
-    def _seed_messages(self):
-        """Add some demo messages."""
-        now = datetime.now()
-        
-        self.messages_db = {
-            "C001": [
-                {
-                    "user": "U123",
-                    "text": "Good morning team!",
-                    "ts": (now - timedelta(hours=2)).timestamp()
-                },
-                {
-                    "user": "U456",
-                    "text": "Morning! Ready for the sprint planning?",
-                    "ts": (now - timedelta(hours=1, minutes=30)).timestamp()
-                }
-            ],
-            "C002": [
-                {
-                    "user": "U123",
-                    "text": "The deployment to production was successful",
-                    "ts": (now - timedelta(hours=3)).timestamp()
-                },
-                {
-                    "user": "U456",
-                    "text": "Great! All tests passing?",
-                    "ts": (now - timedelta(hours=2, minutes=45)).timestamp()
-                },
-                {
-                    "user": "U123",
-                    "text": "Yes, 100% test coverage maintained",
-                    "ts": (now - timedelta(hours=2, minutes=30)).timestamp()
-                }
-            ]
-        }
-    
-    def chat_postMessage(self, channel: str, text: str) -> Dict:
-        """Send a message to channel."""
-        message = {
-            "user": "BOT",
-            "text": text,
-            "ts": datetime.now().timestamp()
-        }
-        
-        if channel not in self.messages_db:
-            self.messages_db[channel] = []
-        
-        self.messages_db[channel].append(message)
-        
-        return {
-            "ok": True,
-            "channel": channel,
-            "ts": message["ts"],
-            "message": message
-        }
-    
-    def conversations_history(self, channel: str, limit: int = 10) -> Dict:
-        """Get channel message history."""
-        messages = self.messages_db.get(channel, [])
-        
-        # Sort by timestamp (most recent first)
-        messages = sorted(messages, key=lambda x: x["ts"], reverse=True)
-        
-        return {
-            "ok": True,
-            "messages": messages[:limit]
-        }
-    
-    def search_messages(self, query: str) -> Dict:
-        """Search messages across channels."""
-        results = []
-        
-        for channel, messages in self.messages_db.items():
-            for msg in messages:
-                if query.lower() in msg["text"].lower():
-                    results.append({
-                        **msg,
-                        "channel": channel
-                    })
-        
-        return {
-            "ok": True,
-            "messages": {"matches": results}
-        }
-    
-    def users_info(self, user: str) -> Dict:
-        """Get user information."""
-        user_data = self.users_db.get(user)
-        
-        if user_data:
-            return {
-                "ok": True,
-                "user": user_data
-            }
-        else:
-            return {
-                "ok": False,
-                "error": "user_not_found"
-            }
-
-
-# ============================================================================
 # SLACK MCP SERVER
 # ============================================================================
 
@@ -188,8 +60,13 @@ class SlackMCPServer:
     - Search messages
     - Get user information
     
+    Requires: slack_sdk
+    Install: pip install slack-sdk
+    
     Example:
-        config = SlackConfig(bot_token="xoxb-...")
+        from slack_sdk import WebClient
+        
+        config = SlackConfig(bot_token=os.getenv("SLACK_BOT_TOKEN"))
         server = SlackMCPServer(config)
         
         # Send message
@@ -204,8 +81,22 @@ class SlackMCPServer:
         if bot_token:
             self.config.bot_token = bot_token
         
-        # Initialize Slack client (mock for demo)
-        self.client = MockSlackClient(self.config.bot_token)
+        # Initialize Slack client (requires slack_sdk)
+        try:
+            from slack_sdk import WebClient
+            self.client = WebClient(token=self.config.bot_token)
+            # Test connection
+            auth_test = self.client.auth_test()
+            if not auth_test.get("ok"):
+                raise Exception("Slack authentication failed")
+        except ImportError:
+            raise ImportError(
+                "slack_sdk is required for SlackMCPServer. "
+                "Install it with: pip install slack-sdk"
+            )
+        except Exception as e:
+            raise Exception(f"Failed to initialize Slack client: {e}")
+
         
         # Rate limiting
         self.request_count = 0

@@ -1,32 +1,77 @@
 ﻿# 🪁 Kite
 
-**Production-Ready Agentic AI Framework**  
-*High-Performance • Lightweight • Simple*
+**Build Production-Ready AI Agents That Actually Work**
+
+*Fast • Safe • Simple • Powerful*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](https://github.com/thienzz/Kite/releases)
-[![Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/thienzz/Kite)
 
-> ⚠️ **Alpha Release**: v0.1.0 is an early release. Not recommended for production use without thorough testing.
+> 🚀 **What is Kite?** A lightweight Python framework that turns LLMs into reliable AI agents you can deploy with confidence. No PhD required.
 
-[Installation](#installation) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Examples](#examples) • [Contributing](#contributing)
+## 📦 Installation
+
+**Via pip (recommended):**
+```bash
+pip install kite-agent
+```
+
+**From source:**
+```bash
+git clone https://github.com/thienzz/Kite.git
+cd Kite
+pip install -e .
+```
+
+[Quick Start](#-quick-start) • [Examples](#-production-examples) • [Features](#-core-features) • [Documentation](#-documentation)
 
 ---
-Kite is a **production-grade framework** for building intelligent AI agents and workflows. Designed for real-world applications, it bridges the gap between probabilistic LLM outputs and deterministic business logic with enterprise-grade safety, memory, and observability.
+
+## ✨ Why Developers Choose Kite
+
+Most AI frameworks overwhelm you with complexity. Kite gives you **production-grade reliability** with **dead-simple APIs**:
+
+```python
+from kite import Kite
+
+# Initialize once
+ai = Kite()
+
+# Create a specialist agent
+support_agent = ai.create_agent(
+    name="CustomerSupport",
+    system_prompt="You are a helpful e-commerce support agent.",
+    tools=[search_orders, process_refunds],
+    agent_type="react"  # Autonomous reasoning loop
+)
+
+# Run it
+result = await support_agent.run("Where is order ORD-12345?")
+print(result['response'])
+```
+
+**That's it.** Behind the scenes, Kite handles:
+- ✅ Circuit breakers (prevent cascading failures)
+- ✅ Retry logic (auto-recovery from API errors)
+- ✅ Memory management (RAG, sessions, graph knowledge)
+- ✅ Multi-provider support (OpenAI, Anthropic, Groq, local models)
+- ✅ Cost tracking & monitoring
 
 ---
 
-## 🎯 Why Kite?
+## 🎯 Built for Real-World Problems
 
-**Built for Production from Day One**
+Stop building MVP demos. Start shipping production systems:
 
-- ⚡ **High Performance**: Lazy-loaded architecture with minimal startup overhead (~50ms)
-- 🛡️ **Enterprise Safety**: Circuit breakers, idempotency, and self-healing validation
-- 🚀 **Multi-Provider**: Seamless switching between OpenAI, Anthropic, Groq, Together AI, and local models
-- 🧠 **Advanced Memory**: Vector RAG, Graph RAG, and session memory out-of-the-box
-- 📊 **Observable**: Built-in monitoring, metrics, and cost tracking
-- 🔧 **Simple API**: Intuitive design that scales from prototypes to production
+| Your Challenge | Kite's Solution |
+|---------------|----------------|
+| "LLMs hallucinate in production" | **Vector RAG + Graph RAG** for grounded responses |
+| "API failures crash my agents" | **Circuit breakers** auto-pause failing services |
+| "Too slow & expensive" | **Smart/Fast model routing** - use cheap models when possible |
+| "Can't track what agents are doing" | **Event bus + metrics** for full observability |
+| "Hard to prevent dangerous actions" | **Guardrails & shell whitelisting** built-in |
+| "Need human approval for critical tasks" | **HITL workflows** with checkpoints |
 
 ---
 
@@ -40,258 +85,358 @@ cd Kite
 pip install -r requirements.txt
 ```
 
-### 30-Second Example
+### Setup Environment
 
-```python
-from kite import Kite
-
-# Initialize framework (lazy-loads components)
-ai = Kite()
-
-# Create a specialized agent
-analyst = ai.create_agent(
-    name="DataAnalyst",
-    system_prompt="You are a data analyst. Provide actionable insights.",
-    tools=[ai.tools.get("web_search")]
-)
-
-# Run with automatic safety and retry logic
-result = await analyst.run("Analyze Q4 revenue trends")
-print(result['response'])
+```bash
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
-**That's it.** No complex configuration. Production-ready by default.
+**Minimum config:**
+```bash
+LLM_PROVIDER=openai  # or anthropic, groq, ollama
+OPENAI_API_KEY=sk-...
+```
+
+### Your First Agent (30 seconds)
+
+```python
+import asyncio
+from kite import Kite
+
+async def main():
+    # Auto-loads from .env
+    ai = Kite()
+    
+    # Create a tool
+    def get_weather(city: str) -> str:
+        return f"Sunny, 72°F in {city}"
+    
+    weather_tool = ai.create_tool("get_weather", get_weather, 
+                                   "Get current weather for a city")
+    
+    # Create agent
+    agent = ai.create_agent(
+        name="WeatherBot",
+        system_prompt="You help users check weather. Always use the tool.",
+        tools=[weather_tool],
+        agent_type="react"
+    )
+    
+    # Run
+    result = await agent.run("What's the weather in San Francisco?")
+    print(result['response'])
+
+asyncio.run(main())
+```
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture Overview
 
-### Core Components
+Kite's modular design lets you use what you need:
 
 ```
 kite/
-├── agents/          # 4 reasoning patterns (ReAct, Plan-Execute, ReWOO, ToT)
-├── memory/          # Vector, Graph RAG, Session memory
-├── safety/          # Circuit breakers, idempotency, kill switches
-├── pipeline/        # Deterministic workflows with HITL support
-├── routing/         # Semantic and aggregator routers
-├── tools/           # Built-in tools + MCP integrations
-└── monitoring/      # Real-time metrics and dashboards
+├── agents/          # 🤖 Reasoning patterns (ReAct, ReWOO, ToT, Plan-Execute)
+├── memory/          # 🧠 Vector RAG, Graph RAG, Session Memory
+├── safety/          # 🛡️ Circuit Breakers, Idempotency, Kill Switches
+├── routing/         # 🧭 Semantic Routing, Aggregator Routing, Smart/Fast Model Selection
+├── tools/           # 🔧 Built-in utilities (Web Search, Code Execution, Shell, MCP integrations)
+├── pipeline/        # ⚙️ Deterministic workflows with HITL support
+└── monitoring/      # 📊 Metrics, Tracing, Event Bus
 ```
 
-### Design Philosophy
+### Core Components (Lazy-Loaded)
 
-1. **Lazy Loading**: Components initialize only when needed
-2. **Fail-Safe Defaults**: Circuit breakers and retries enabled automatically
-3. **Provider Agnostic**: Switch LLMs without changing code
-4. **Observable**: Every operation is logged and metered
+```python
+ai = Kite()
+
+# These initialize only when accessed:
+ai.llm                  # LLM provider (OpenAI, Anthropic, Groq, Ollama)
+ai.embeddings           # Embedding provider (FastEmbed, OpenAI)
+ai.vector_memory        # Vector similarity search (FAISS, ChromaDB, or in-memory)
+ai.graph_rag            # Knowledge graph for relationships
+ai.session_memory       # Conversation history
+ai.semantic_router      # Intent-based routing
+ai.circuit_breaker      # Fault tolerance
+ai.idempotency          # Duplicate request prevention
+ai.tools                # Tool registry
+ai.pipeline             # Workflow manager
+```
 
 ---
 
-## 🚀 Key Features
+## 🚀 Core Features
 
-### 1. Multi-Provider LLM Support
+### 1️⃣ Multiple Reasoning Patterns
+
+Choose the right "brain" for your task:
 
 ```python
-# Use any provider with the same API
-ai = Kite()  # Auto-detects from .env
+# ReAct: Standard loop (Think → Act → Observe → Repeat)
+agent = ai.create_agent(..., agent_type="react")
 
-# OpenAI
-ai.config['llm_provider'] = 'openai'
-ai.config['llm_model'] = 'gpt-4'
+# ReWOO: Plan everything upfront, execute in parallel (FAST!)
+agent = ai.create_agent(..., agent_type="rewoo")
 
-# Anthropic
-ai.config['llm_provider'] = 'anthropic'
-ai.config['llm_model'] = 'claude-3-5-sonnet-20241022'
+# Tree-of-Thoughts: Explore multiple solutions (creative tasks)
+agent = ai.create_agent(..., agent_type="tot")
 
-# Local (Ollama)
-ai.config['llm_provider'] = 'ollama'
-ai.config['llm_model'] = 'qwen2.5:1.5b'
-
-# Groq (ultra-fast)
-ai.config['llm_provider'] = 'groq'
-ai.config['llm_model'] = 'llama-3.3-70b-versatile'
+# Plan-Execute: Classic two-phase planning
+agent = ai.create_agent(..., agent_type="plan_execute")
 ```
 
-### 2. Production Safety
+**See them in action:** [examples/case6_reasoning_architectures.py](examples/case6_reasoning_architectures.py)
+
+---
+
+### 2️⃣ Production Safety Mechanisms
 
 **Circuit Breakers** prevent cascading failures:
 
 ```python
-# Automatic protection for all LLM calls
-ai.circuit_breaker.config.failure_threshold = 3
-ai.circuit_breaker.config.timeout_seconds = 60
+ai.circuit_breaker.config.failure_threshold = 3  # Open after 3 failures
+ai.circuit_breaker.config.timeout_seconds = 60   # Cool-down period
 
-# Circuit opens after 3 failures, blocks requests for 60s
-# Automatically transitions to half-open for testing recovery
+# Circuit auto-opens if LLM/tool fails 3x, preventing waste
 ```
 
 **Idempotency** prevents duplicate operations:
 
 ```python
-# Deduplicate requests within 1 hour window
+# Same operation_id within TTL returns cached result
 result = ai.idempotency.execute(
-    operation_id="process_order_12345",
-    func=process_payment,
-    args=(order_id, amount)
+    operation_id="order_123_refund",
+    func=process_refund,
+    args=(order_id,)
 )
 ```
 
-### 3. Advanced Memory Systems
-
-**Vector Memory** for semantic search:
+**Guardrails** for dangerous operations:
 
 ```python
-# Add documents
-ai.vector_memory.add_document("doc1", "Kite is a production-ready framework...")
+from kite.tools.system_tools import ShellTool
 
-# Semantic search
-results = ai.vector_memory.search("What is Kite?", top_k=3)
-```
+# Whitelist safe commands only
+shell = ShellTool(allowed_commands=["ls", "git", "df", "uptime"])
 
-**Graph RAG** for relationship-aware retrieval:
-
-```python
-# Build knowledge graph
-ai.graph_rag.add_entity("Kite", "framework", {"type": "software"})
-ai.graph_rag.add_relationship("Kite", "uses", "Circuit Breakers")
-
-# Query with context
-answer = ai.graph_rag.query("How does Kite ensure reliability?")
-```
-
-### 4. Agent Reasoning Patterns (Supported natively)
-
-**ReAct** (Reasoning + Acting) - *Linear problem solving*:
-```python
-agent = ReActAgent("Engineer", "You are an engineer", tools=[search_tool], framework=ai)
-result = await agent.run("Research the best database for high throughput")
-```
-
-**ReWOO** (Reasoning Without Observation) - *Fast, parallel execution*:
-```python
-# Generates a graph of tasks first, then executes independent tools in parallel
-agent = ReWOOAgent("Planner", "Plan then execute", tools=[search_tool], framework=ai)
-result = await agent.run("Find pricing for AWS, GCP, and Azure and compare them")
-```
-
-**Tree-of-Thoughts** (ToT) - *Complex exploration*:
-```python
-# Explores multiple reasoning branches (BFS/DFS) to find the optimal path
-agent = TreeOfThoughtsAgent("Architect", "Explore alternatives", tools=tools, framework=ai)
-result = await agent.run("Design a fault-tolerant system architecture")
-```
-
-### 5. Human-in-the-Loop Workflows
-
-```python
-# Create workflow with checkpoints
-workflow = ai.create_workflow("approval_flow")
-workflow.add_step("research", research_func)
-workflow.add_checkpoint("research", approval_required=True)
-workflow.add_step("execute", execute_func)
-
-# Execute (pauses at checkpoint)
-state = await workflow.execute_async({"query": "..."})
-
-# Resume after approval
-state = await workflow.resume_async(state.task_id, feedback="Approved")
+# Blocks 'rm -rf', 'sudo', etc. automatically
 ```
 
 ---
 
-## 📊 Performance
+### 3️⃣ Advanced Memory Systems
+
+**Vector Memory** for semantic search:
+
+```python
+# Add knowledge
+ai.vector_memory.add_document("policy_001", "Returns accepted within 30 days...")
+
+# Semantic search
+results = ai.vector_memory.search("What's the return policy?", top_k=3)
+```
+
+**Graph RAG** for relationship-aware knowledge:
+
+```python
+ai.graph_rag.add_entity("Kite", "framework", {"language": "Python"})
+ai.graph_rag.add_relationship("Kite", "uses", "OpenAI")
+
+# Query walks the graph
+answer = ai.graph_rag.query("What providers does Kite support?")
+```
+
+**Session Memory** for conversations:
+
+```python
+ai.session_memory.add_message(session_id="user_123", role="user", content="Hi!")
+history = ai.session_memory.get_history(session_id="user_123")
+```
+
+---
+
+### 4️⃣ Smart Multi-Provider Support
+
+Switch between providers without changing code:
+
+```python
+# OpenAI
+ai.config['llm_provider'] = 'openai'
+ai.config['llm_model'] = 'gpt-4o'
+
+# Anthropic
+ai.config['llm_provider'] = 'anthropic'
+ai.config['llm_model'] = 'claude-3-5-sonnet-20241022'
+
+# Groq (ultra-fast inference)
+ai.config['llm_provider'] = 'groq'
+ai.config['llm_model'] = 'llama-3.3-70b-versatile'
+
+# Local with Ollama
+ai.config['llm_provider'] = 'ollama'
+ai.config['llm_model'] = 'qwen2.5:1.5b'
+```
+
+**Cost Optimization**: Use resource-aware routing:
+
+```python
+from kite.optimization.resource_router import ResourceAwareRouter
+
+router = ResourceAwareRouter(ai.config)
+
+# Automatically uses:
+# - FAST model (cheap) for routing, simple tasks
+# - SMART model (powerful) for complex reasoning
+analyst = ai.create_agent(
+    name="Analyst",
+    model=router.smart_model,  # gpt-4o for hard problems
+    ...
+)
+```
+
+---
+
+### 5️⃣ Human-in-the-Loop Workflows
+
+Build approval workflows for critical operations:
+
+```python
+from kite.pipeline import DeterministicPipeline
+
+# Define workflow
+def draft_email(state):
+    return {"draft": "Dear Customer, ..."}
+
+def send_email(state):
+    return {"status": "sent"}
+
+# Create pipeline with checkpoint
+pipeline = ai.pipeline.create("approval_flow")
+pipeline.add_step("draft", draft_email)
+pipeline.add_checkpoint("draft")  # Pauses here for approval
+pipeline.add_step("send", send_email)
+
+# Execute (stops at checkpoint)
+state = await pipeline.execute_async({"to": "user@example.com"})
+
+# Human reviews, then resume
+final = await pipeline.resume_async(state.task_id, approved=True)
+```
+
+**Real example:** [case4_multi_agent_collab.py](examples/case4_multi_agent_collab.py)
+
+---
+
+## 📊 Production Examples
+
+We built **6 real-world case studies** to show you exactly how to use Kite:
+
+| Case | Scenario | Key Concepts | Difficulty |
+|------|----------|--------------|-----------|
+| **[Case 1](examples/case1_ecommerce_support.py)** | E-commerce Support Bot | LLM Routing, Tools, Multi-Agent | 🟢 Beginner |
+| **[Case 2](examples/case2_enterprise_analytics.py)** | Data Analyst Agent | SQL + Python Execution, Charts | 🟡 Intermediate |
+| **[Case 3](examples/case3_research_assistant.py)** | Deep Research System | Web Scraping, Multi-Step Planning | 🟡 Intermediate |
+| **[Case 4](examples/case4_multi_agent_collab.py)** | Multi-Agent Collaboration | Supervisor Pattern, HITL, Iterative Refinement | 🔴 Advanced |
+| **[Case 5](examples/case5_devops_automation.py)** | DevOps Automation | Shell Tools, Safety Guardrails | 🟡 Intermediate |
+| **[Case 6](examples/case6_reasoning_architectures.py)** | Reasoning Pattern Comparison | ReAct vs ReWOO vs ToT | 🔴 Advanced |
+
+### Run an Example
+
+```bash
+# E-commerce support demo
+PYTHONPATH=. python3 examples/case1_ecommerce_support.py
+
+# Data analyst with charts
+PYTHONPATH=. python3 examples/case2_enterprise_analytics.py
+```
+
+**👉 [See detailed tutorials for each case →](examples/README.md)**
+
+---
+
+## 📈 Performance Benchmarks
 
 | Metric | Value |
 |--------|-------|
-| **Startup Time** | ~50ms (lazy loading) |
+| **Framework Startup** | ~50ms (lazy loading) |
 | **Memory Footprint** | <100MB (base) |
-| **LLM Latency** | Provider-dependent (Groq: ~500ms, OpenAI: ~2s) |
-| **Throughput** | 100+ requests/sec (with caching) |
-| **Concurrent Agents** | Limited by LLM provider rate limits |
+| **Agent Latency** | 500ms - 2s (depends on LLM provider) |
+| **Throughput** | 100+ req/s with caching |
 
-**Benchmarks** (on M1 Mac, local Ollama):
-- Simple completion: 50-200ms
-- Agent with tools: 500ms-2s
-- Plan-and-execute (3 steps): 3-5s
+**Real data** (M1 Mac, Ollama qwen2.5:1.5b):
+- Simple completion: **50-200ms**
+- ReAct agent (3 tool calls): **800ms-1.5s**
+- Plan-Execute (5 steps): **3-5s**
 
 ---
 
 ## 🛠️ Production Deployment
 
-### Docker
+### Docker Compose (Recommended)
 
 ```bash
 docker-compose up -d
 ```
 
-Includes:
+**Includes:**
 - Kite API server (FastAPI)
-- Redis (caching + idempotency)
+- Redis (caching)
 - PostgreSQL (session storage)
 - Prometheus + Grafana (monitoring)
 
 ### Environment Variables
 
+See [.env.example](.env.example) for all options. Key configs:
+
 ```bash
 # LLM Provider
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-4
+LLM_MODEL=gpt-4o
 OPENAI_API_KEY=sk-...
 
-# Embedding Provider
+# Embeddings
 EMBEDDING_PROVIDER=fastembed
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 
 # Safety
-CIRCUIT_BREAKER_THRESHOLD=3
-CIRCUIT_BREAKER_TIMEOUT=60
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_TIMEOUT_SECONDS=60
 IDEMPOTENCY_TTL=3600
 
 # Memory
 VECTOR_BACKEND=faiss
 VECTOR_DIMENSION=384
-```
 
-See [`.env.example`](.env.example) for full configuration.
+# Optimization
+FAST_LLM_MODEL=groq/llama-3.1-8b-instant  # Cheap routing
+SMART_LLM_MODEL=openai/gpt-4o             # Complex tasks
+```
 
 ---
 
-## 📚 Examples & Tutorials
+## 📖 Documentation
 
-**[👉 Click here for detailed Case Study Tutorials](examples/README.md)**
+### Guides
 
-The [`examples/`](examples/) directory contains 6 production-ready case studies. Check the **[Examples README](examples/README.md)** for step-by-step guides on each.
+- **[Quick Start Guide](docs/quickstart.md)** - Get running in 5 minutes
+- **[Architecture Deep Dive](docs/architecture.md)** - How Kite works internally
+- **[API Reference](docs/api_reference.md)** - Complete API docs
+- **[Deployment Guide](docs/deployment.md)** - Docker, scaling, monitoring
+- **[Safety Patterns](docs/safety.md)** - Circuit breakers, guardrails, idempotency
+- **[Memory Systems](docs/memory.md)** - Vector, Graph RAG, sessions
 
-1.  **[E-commerce Support](examples/case1_ecommerce_support.py)**
-    *   *Concept*: RAG + Tool Use + Contextual Memory.
-    *   *Demo*: "Where is my order?", "Return policy query".
+### Examples
 
-2.  **[Enterprise Data Scientist](examples/case2_enterprise_analytics.py)**
-    *   *Concept*: Hybrid Reasoning (SQL + Python Code Execution).
-    *   *Features*: Safe `PythonReplTool` (pandas/matplotlib), SQL querying of `sqlite` databases.
-    *   *Output*: Generates visual charts and insights.
+All examples include detailed inline comments and step-by-step walkthroughs:
 
-3.  **[Deep Research Assistant](examples/case3_research_assistant.py)**
-    *   *Concept*: Multi-step web research loop.
-    *   *Features*: Google Search integration, content synthesis, citation tracking.
-
-4.  **[Complex Iterative Workflow](examples/case4_complex_iterative_workflow.py)**
-    *   *Concept*: Human-in-the-Loop + State Management.
-    *   *Features*: Pausable workflows, approval checkpoints.
-
-5.  **[DevOps Automation](examples/case5_devops_automation.py)**
-    *   *Concept*: System Administration & Guardrails.
-    *   *Features*: Safe `ShellTool` (whitelisted commands), deployment simulation, circuit breakers.
-
-6.  **[Agent Architectures Showcase](examples/case6_reasoning_architectures.py)**
-    *   *Concept*: Reasoning Pattern Comparison.
-    *   *Features*: Direct comparison of **ReAct** (Linear), **ReWOO** (Parallel Plan), and **Tree-of-Thoughts** (Branching) on a complex design problem.
-
-Run any example:
-```bash
-PYTHONPATH=. python3 examples/case6_reasoning_architectures.py
-```
+- [E-commerce Support](examples/case1_ecommerce_support.py) - Multi-agent routing
+- [Enterprise Analytics](examples/case2_enterprise_analytics.py) - SQL + Python
+- [Research Assistant](examples/case3_research_assistant.py) - Web research
+- [Multi-Agent Workflow](examples/case4_multi_agent_collab.py) - Supervisor pattern
+- [DevOps Automation](examples/case5_devops_automation.py) - Safe shell execution
+- [Reasoning Patterns](examples/case6_reasoning_architectures.py) - ReAct/ReWOO/ToT
 
 ---
 
@@ -301,10 +446,10 @@ PYTHONPATH=. python3 examples/case6_reasoning_architectures.py
 # Run all tests
 pytest tests/
 
-# Specific test suites
-pytest tests/verify_planning.py
-pytest tests/verify_conversation.py
-pytest tests/verify_hitl.py
+# Specific suites
+pytest tests/test_framework.py      # Core functionality
+pytest tests/test_async_concurrency.py  # Async patterns
+pytest tests/test_exports.py        # Module exports
 
 # With coverage
 pytest --cov=kite tests/
@@ -312,66 +457,67 @@ pytest --cov=kite tests/
 
 ---
 
-## 📖 Documentation
-
-Comprehensive guides for building production-grade AI agents:
-
-- **[Quick Start](docs/quickstart.md)** - Get started in 5 minutes
-- **[Architecture Guide](docs/architecture.md)** - System design and components
-- **[API Reference](docs/api_reference.md)** - Complete API documentation
-- **[Deployment Guide](docs/deployment.md)** - Docker, monitoring, scaling
-- **[Safety Guide](docs/safety.md)** - Circuit breakers, idempotency, kill switches
-- **[Memory Systems](docs/memory.md)** - Vector, Graph RAG, session memory
-
----
-
 ## 🤝 Contributing
 
-We welcome contributions! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
-**Key Areas:**
-- New agent reasoning patterns
-- Additional LLM provider integrations
-- Performance optimizations
-- Documentation improvements
+- 🐛 Bug reports & feature requests
+- 📝 Documentation improvements
+- 🔧 New reasoning patterns
+- 🌐 Additional LLM integrations
+- ⚡ Performance optimizations
+
+**Priority areas:**
+- More agent architectures (LATS, Reflexion)
+- Streaming response support
+- Multi-agent orchestration patterns
+- Integration tests for all examples
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] **v1.1**: Streaming responses, async batch processing
-- [ ] **v1.2**: Multi-agent orchestration patterns
-- [ ] **v1.3**: Fine-tuning integration for custom models
-- [ ] **v2.0**: Distributed agent execution (Ray/Celery)
+- [x] **v0.1.0**: Core framework, ReAct/ReWOO/ToT agents
+- [ ] **v0.2.0**: Streaming responses, async batch processing
+- [ ] **v0.3.0**: Multi-agent coordination primitives
+- [ ] **v0.4.0**: Fine-tuning integration
+- [ ] **v1.0.0**: Production-ready release with full test coverage
 
 ---
 
 ## 📜 License
 
-MIT License - see [`LICENSE`](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details.
+
+**TLDR:** Use it however you want. Commercial use welcome. No warranty.
 
 ---
 
 ## 🙏 Acknowledgments
 
-Built with:
+Built with amazing open-source tools:
+
 - [Ollama](https://ollama.ai/) - Local LLM runtime
-- [FastEmbed](https://github.com/qdrant/fastembed) - Fast embeddings
-- [FAISS](https://github.com/facebookresearch/faiss) - Vector similarity search
+- [FastEmbed](https://github.com/qdrant/fastembed) - Lightning-fast embeddings
+- [FAISS](https://github.com/facebookresearch/faiss) - Facebook's vector search
 - [ChromaDB](https://www.trychroma.com/) - Vector database
+- [LangChain](https://python.langchain.com/) - Inspiration for tool abstractions
 
 ---
 
-## 📧 Support
+## 💬 Community & Support
 
-- **Issues**: [GitHub Issues](https://github.com/thienzz/Kite/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/thienzz/Kite/discussions)
-- **Email**: [your-email@example.com]
+- **🐛 Bug Reports:** [GitHub Issues](https://github.com/thienzz/Kite/issues)
+- **💡 Feature Requests:** [GitHub Discussions](https://github.com/thienzz/Kite/discussions)
+- **📧 Contact:** thien@beevr.ai
 
 ---
 
 <p align="center">
-  <strong>Built for developers who ship to production.</strong><br>
-  Star ⭐ this repo if you find it useful!
+  <strong>Stop building demos. Start shipping AI agents to production.</strong><br>
+  ⭐ Star this repo if Kite helps you build better AI systems!
 </p>
 
+<p align="center">
+  Made with ❤️ by developers who ship production AI
+</p>

@@ -47,126 +47,6 @@ class GDriveConfig:
 
 
 # ============================================================================
-# MOCK GOOGLE DRIVE CLIENT
-# ============================================================================
-
-class MockGDriveClient:
-    """
-    Mock Google Drive client for demonstration.
-    
-    In production, use:
-    from googleapiclient.discovery import build
-    service = build('drive', 'v3', credentials=creds)
-    """
-    
-    def __init__(self):
-        self.files_db = {
-            "file1": {
-                "id": "file1",
-                "name": "Q4 2025 Strategy.docx",
-                "mimeType": "application/vnd.google-apps.document",
-                "size": 45000,
-                "createdTime": "2025-10-15T10:00:00Z",
-                "modifiedTime": "2025-12-01T15:30:00Z",
-                "owners": [{"displayName": "Sarah Johnson"}],
-                "parents": ["folder1"],
-                "content": """Q4 2025 Strategic Plan
-                
-Executive Summary:
-Our focus for Q4 is infrastructure modernization through Project Zeus.
-Key initiatives include cloud migration and AI integration.
-
-Budget: $2.5M
-Timeline: October - December 2025
-Team Lead: David Chen"""
-            },
-            "file2": {
-                "id": "file2",
-                "name": "AlphaCorp Partnership Agreement.pdf",
-                "mimeType": "application/pdf",
-                "size": 128000,
-                "createdTime": "2025-11-01T09:00:00Z",
-                "modifiedTime": "2025-11-15T14:00:00Z",
-                "owners": [{"displayName": "David Chen"}],
-                "parents": ["folder2"],
-                "content": """AlphaCorp Partnership Agreement
-
-This agreement, entered into on November 1, 2025, between
-AlphaCorp and our company, establishes a strategic partnership
-for joint infrastructure development.
-
-Terms:
-- 2-year commitment
-- Joint IP ownership
-- Revenue sharing: 60/40 split"""
-            },
-            "file3": {
-                "id": "file3",
-                "name": "Engineering Team Roster.xlsx",
-                "mimeType": "application/vnd.google-apps.spreadsheet",
-                "size": 32000,
-                "createdTime": "2025-09-01T08:00:00Z",
-                "modifiedTime": "2026-01-10T11:00:00Z",
-                "owners": [{"displayName": "HR Department"}],
-                "parents": ["folder1"],
-                "content": """Name,Role,Project,Manager
-David Chen,Engineering Lead,Project Zeus,Sarah Johnson
-Alice Wang,Senior Engineer,Project Zeus,David Chen
-Bob Smith,DevOps Engineer,Project Zeus,David Chen"""
-            }
-        }
-        
-        self.folders_db = {
-            "folder1": {
-                "id": "folder1",
-                "name": "Company Strategy",
-                "mimeType": "application/vnd.google-apps.folder"
-            },
-            "folder2": {
-                "id": "folder2",
-                "name": "Legal Documents",
-                "mimeType": "application/vnd.google-apps.folder"
-            }
-        }
-    
-    def files_list(self, q: str = None, pageSize: int = 10, fields: str = "*") -> Dict:
-        """List/search files."""
-        results = []
-        
-        # Simple search implementation
-        for file_id, file_data in self.files_db.items():
-            if q:
-                # Check if query matches name or content
-                if (q.lower() in file_data["name"].lower() or
-                    q.lower() in file_data.get("content", "").lower()):
-                    results.append(file_data)
-            else:
-                results.append(file_data)
-        
-        return {
-            "files": results[:pageSize]
-        }
-    
-    def files_get(self, fileId: str, fields: str = "*") -> Dict:
-        """Get file metadata."""
-        file_data = self.files_db.get(fileId)
-        
-        if file_data:
-            return file_data
-        else:
-            raise Exception(f"File not found: {fileId}")
-    
-    def files_get_media(self, fileId: str) -> str:
-        """Get file content."""
-        file_data = self.files_db.get(fileId)
-        
-        if file_data:
-            return file_data.get("content", "")
-        else:
-            raise Exception(f"File not found: {fileId}")
-
-
-# ============================================================================
 # GOOGLE DRIVE MCP SERVER
 # ============================================================================
 
@@ -176,9 +56,20 @@ class GoogleDriveMCPServer:
     
     Provides tools for AI agents to search and read Google Drive files.
     
+    Requires: google-api-python-client, google-auth-httplib2, google-auth-oauthlib
+    Install: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+    
+    Setup:
+        1. Enable Google Drive API in Google Cloud Console
+        2. Download credentials.json
+        3. Run authentication flow to get token
+    
     Example:
-        config = GDriveConfig()
-        server = GDriveMCPServer(config)
+        from googleapiclient.discovery import build
+        from google.oauth2.credentials import Credentials
+        
+        config = GDriveConfig(credentials_path='~/.gdrive_credentials.json')
+        server = GoogleDriveMCPServer(config)
         
         # Search files
         results = server.search_files("Q4 strategy")
@@ -192,8 +83,50 @@ class GoogleDriveMCPServer:
         if credentials_path:
             self.config.credentials_path = credentials_path
         
-        # Initialize Drive client (mock for demo)
-        self.drive = MockGDriveClient()
+        # Initialize Drive client (requires Google API client)
+        try:
+            from googleapiclient.discovery import build
+            from google.oauth2.credentials import Credentials
+            from google.auth.transport.requests import Request
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            import os
+            import pickle
+            
+            SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+            
+            creds = None
+            token_path = os.path.expanduser('~/.gdrive_token.pickle')
+            
+            # Load existing token
+            if os.path.exists(token_path):
+                with open(token_path, 'rb') as token:
+                    creds = pickle.load(token)
+            
+            # Refresh or get new credentials
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                elif self.config.credentials_path and os.path.exists(self.config.credentials_path):
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.config.credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                else:
+                    raise Exception("Google Drive credentials not found. Please provide credentials_path")
+                
+                # Save token
+                with open(token_path, 'wb') as token:
+                    pickle.dump(creds, token)
+            
+            self.drive = build('drive', 'v3', credentials=creds)
+            
+        except ImportError:
+            raise ImportError(
+                "Google API client is required for GoogleDriveMCPServer. "
+                "Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib"
+            )
+        except Exception as e:
+            raise Exception(f"Failed to initialize Google Drive client: {e}")
+
         
         # Rate limiting
         self.request_count = 0

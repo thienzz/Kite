@@ -1,691 +1,518 @@
-# API Reference
+# 📖 Kite API Reference
 
-**Complete API documentation for Kite framework**
+**Comprehensive guide to all Kite methods and APIs**
 
-This document provides detailed API documentation for all Kite components.
+This document covers every public API in the Kite framework with examples, parameters, and use cases.
 
 ---
 
 ## Table of Contents
 
-- [Kite Core](#kite-core)
-- [Agents](#agents)
-- [Tools](#tools)
-- [Memory](#memory)
-- [Safety](#safety)
-- [Pipelines](#pipelines)
-- [Routing](#routing)
+1. [Core Kite Class](#1-core-kite-class)
+2. [Agent APIs](#2-agent-apis)
+3. [Tool System](#3-tool-system)
+4. [Memory Systems](#4-memory-systems)
+5. [Safety Mechanisms](#5-safety-mechanisms)
+6. [Routing](#6-routing)
+7. [Workflows & Pipelines](#7-workflows--pipelines)
+8. [Monitoring & Metrics](#8-monitoring--metrics)
+9. [Configuration](#9-configuration)
 
 ---
 
-## Kite Core
+## 1. Core Kite Class
 
-### `class Kite(config: Optional[Dict] = None)`
+### Initialization
 
-Main framework class.
+#### `Kite(config: Optional[Dict] = None)`
+
+Initialize the Kite framework.
 
 **Parameters:**
-- `config` (Optional[Dict]): Configuration dictionary. If not provided, loads from `.env`
+- `config` (Dict, optional): Configuration overrides. Auto-loads from `.env` if not provided.
 
-**Attributes:**
-- `llm`: LLM provider instance
-- `embeddings`: Embedding provider instance
-- `vector_memory`: Vector memory instance
-- `session_memory`: Session memory instance
-- `graph_rag`: Graph RAG instance
-- `circuit_breaker`: Circuit breaker instance
-- `idempotency`: Idempotency manager instance
-- `tools`: Tool registry
+**Returns:** Kite instance
 
 **Example:**
 ```python
+from kite import Kite
+
+# Auto-load from .env
 ai = Kite()
-ai = Kite(config={"llm_provider": "openai", "llm_model": "gpt-4"})
+
+# With custom config
+ai = Kite(config={
+    'llm_provider': 'openai',
+    'llm_model': 'gpt-4o',
+    'circuit_breaker_threshold': 3,
+    'max_iterations': 15
+})
 ```
 
 ---
 
-### LLM Operations
+### LLM Methods
 
-#### `complete(prompt: str) -> str`
+#### `chat(messages: List[Dict], **kwargs) -> str`
 
-Synchronous completion.
-
-**Parameters:**
-- `prompt` (str): Input prompt
-
-**Returns:**
-- `str`: LLM response
-
-**Example:**
-```python
-response = ai.complete("What is AI?")
-```
-
-#### `chat(messages: List[Dict]) -> str`
-
-Synchronous chat completion.
+Chat with the configured LLM using message format.
 
 **Parameters:**
-- `messages` (List[Dict]): List of message dicts with `role` and `content`
+- `messages`: List of message dicts with `role` and `content`
+- `**kwargs`: Additional LLM parameters (temperature, max_tokens, etc.)
 
-**Returns:**
-- `str`: LLM response
+**Returns:** String response
 
 **Example:**
 ```python
 messages = [
-    {"role": "system", "content": "You are a helpful assistant"},
-    {"role": "user", "content": "Hello"}
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is quantum computing?"}
 ]
-response = ai.chat(messages)
+
+response = ai.chat(messages, temperature=0.7)
+print(response)
 ```
 
-#### `complete_async(prompt: str) -> str`
+---
 
-Async completion.
+#### `complete(prompt: str, **kwargs) -> str`
+
+Simple text completion.
 
 **Parameters:**
-- `prompt` (str): Input prompt
+- `prompt`: Text prompt
+- `**kwargs`: LLM parameters
 
-**Returns:**
-- `str`: LLM response
+**Returns:** String response
 
 **Example:**
 ```python
-response = await ai.complete_async("What is AI?")
+response = ai.complete("Write a haiku about coding:")
 ```
 
-#### `chat_async(messages: List[Dict]) -> str`
+---
 
-Async chat completion.
+### Embedding Methods
 
-**Parameters:**
-- `messages` (List[Dict]): List of message dicts
+#### `embed(text: str) -> List[float]`
 
-**Returns:**
-- `str`: LLM response
+Generate embedding vector for text.
 
 **Example:**
 ```python
-response = await ai.chat_async(messages)
+vector = ai.embed("Machine learning is fascinating")
+```
+
+---
+
+#### `embed_batch(texts: List[str]) -> List[List[float]]`
+
+Generate embeddings for multiple texts efficiently.
+
+**Example:**
+```python
+vectors = ai.embed_batch(["Hello world", "Python is great"])
 ```
 
 ---
 
 ### Agent Creation
 
-#### `create_agent(name: str, system_prompt: str = "", tools: List = None, **kwargs) -> Agent`
+#### `create_agent(...) -> Agent`
 
-Create a general-purpose agent.
+Create a custom agent.
 
 **Parameters:**
-- `name` (str): Agent name
-- `system_prompt` (str): System prompt for the agent
-- `tools` (List): List of tools available to the agent
-- `**kwargs`: Additional configuration
-
-**Returns:**
-- `Agent`: Agent instance
+- `name` (str): Agent identifier
+- `system_prompt` (str): Instructions defining agent behavior
+- `tools` (List, optional): List of Tool objects
+- `model` (str, optional): Model specifier (e.g., `"groq/llama-3.3-70b"`)
+- `agent_type` (str, optional): `"base" | "react" | "plan_execute" | "rewoo" | "tot"`
+- `verbose` (bool, optional): Enable detailed logging
 
 **Example:**
 ```python
 agent = ai.create_agent(
-    name="Assistant",
-    system_prompt="You are a helpful assistant",
-    tools=[search_tool, calculator]
+    name="Researcher",
+    system_prompt="You research topics thoroughly.",
+    tools=[search_tool],
+    agent_type="react",
+    model="groq/llama-3.3-70b-versatile",
+    verbose=True
 )
-```
 
-#### `create_planning_agent(strategy: str, name: Optional[str] = None, system_prompt: Optional[str] = None, tools: List = None, max_iterations: int = 10, **kwargs) -> Agent`
-
-Create a planning agent with specific reasoning strategy.
-
-**Parameters:**
-- `strategy` (str): Reasoning strategy: `"plan-and-execute"`, `"rewoo"`, or `"tot"`
-- `name` (Optional[str]): Agent name (auto-generated if not provided)
-- `system_prompt` (Optional[str]): System prompt (defaults based on strategy)
-- `tools` (List): List of tools
-- `max_iterations` (int): Maximum iterations/depth
-- `**kwargs`: Additional configuration (e.g., `branches` for ToT)
-
-**Returns:**
-- `Agent`: Planning agent instance
-
-**Example:**
-```python
-# Plan-and-Execute
-planner = ai.create_planning_agent(strategy="plan-and-execute")
-
-# ReWOO (parallel execution)
-rewoo = ai.create_planning_agent(strategy="rewoo")
-
-# Tree-of-Thoughts
-tot = ai.create_planning_agent(strategy="tot", max_iterations=3, branches=3)
+result = await agent.run("Research quantum computing")
 ```
 
 ---
 
-### Tool Management
+#### `create_tool(name: str, func: Callable, description: str = None) -> Tool`
 
-#### `create_tool(name: str, func: Callable, description: str) -> Tool`
-
-Register a custom tool.
-
-**Parameters:**
-- `name` (str): Tool name
-- `func` (Callable): Tool function
-- `description` (str): Tool description
-
-**Returns:**
-- `Tool`: Tool instance
+Wrap a Python function as a tool.
 
 **Example:**
 ```python
-def my_tool(arg: str) -> str:
-    return f"Processed {arg}"
+def get_weather(city: str) -> str:
+    return f"Sunny, 72°F in {city}"
 
-tool = ai.create_tool("my_tool", my_tool, "Process input")
+tool = ai.create_tool("get_weather", get_weather, "Get current weather")
 ```
 
 ---
 
-### Workflow Management
+### Event System
 
-#### `create_workflow(name: str) -> DeterministicPipeline`
+#### `event_bus.subscribe(event_name: str, callback: Callable)`
 
-Create a deterministic workflow.
-
-**Parameters:**
-- `name` (str): Workflow name
-
-**Returns:**
-- `DeterministicPipeline`: Pipeline instance
+Subscribe to framework events.
 
 **Example:**
 ```python
-workflow = ai.create_workflow("approval_flow")
+def on_action(event, data):
+    print(f"Tool: {data.get('tool')}")
+
+ai.event_bus.subscribe("action", on_action)
 ```
 
 ---
 
-### Memory Operations
+#### `enable_tracing(filename: str = "process_trace.json")`
+
+Enable JSON trace logging.
+
+**Example:**
+```python
+ai.enable_tracing("my_trace.json")
+```
+
+---
+
+### Knowledge Management
 
 #### `load_document(path: str, doc_id: Optional[str] = None) -> bool`
 
 Load document(s) into vector memory.
 
-**Parameters:**
-- `path` (str): File or directory path
-- `doc_id` (Optional[str]): Document ID prefix
-
-**Returns:**
-- `bool`: Success status
+**Supported Formats:** `.txt`, `.md`, `.pdf`, `.docx`, `.json`, `.csv`
 
 **Example:**
 ```python
-ai.load_document("docs/manual.pdf", doc_id="manual")
-ai.load_document("docs/", doc_id="knowledge_base")
+ai.load_document("docs/manual.pdf", "manual")
+ai.load_document("docs/", "knowledge")
 ```
 
 ---
 
-## Agents
+### Properties
 
-### `class Agent(name, system_prompt, llm, tools, framework)`
+#### `ai.llm`
 
-General-purpose agent.
+Configured LLM provider (lazy-loaded).
 
-**Attributes:**
-- `name` (str): Agent name
-- `system_prompt` (str): System prompt
-- `llm`: LLM provider
-- `tools` (Dict): Available tools
-- `call_count` (int): Total calls
-- `success_count` (int): Successful calls
+---
+
+#### `ai.embeddings`
+
+Embedding provider (lazy-loaded).
+
+---
+
+#### `ai.vector_memory`
+
+Vector similarity search engine.
 
 **Methods:**
-
-#### `async run(user_input: str, context: Optional[Dict] = None) -> Dict`
-
-Run agent on input.
-
-**Parameters:**
-- `user_input` (str): User input
-- `context` (Optional[Dict]): Additional context
-
-**Returns:**
-- `Dict`: Result with keys:
-  - `response` (str): Agent response
-  - `success` (bool): Success status
-  - `tool_calls` (List): Tools called
-  - `iterations` (int): Number of iterations
+- `add_document(doc_id, text, metadata=None)`
+- `search(query, top_k=5)`
+- `delete_document(doc_id)`
 
 **Example:**
 ```python
-result = await agent.run("What's the weather?")
-print(result['response'])
-```
-
----
-
-### Plan-Execute Agent
-
-#### `async run_plan(goal: str, context: Optional[Dict] = None) -> Dict`
-
-Run plan-and-execute loop.
-
-**Parameters:**
-- `goal` (str): Goal to achieve
-- `context` (Optional[Dict]): Additional context
-
-**Returns:**
-- `Dict`: Result with keys:
-  - `success` (bool): Success status
-  - `goal` (str): Original goal
-  - `plan` (List[str]): Executed steps
-  - `answer` (str): Final answer
-
-**Example:**
-```python
-planner = ai.create_planning_agent(strategy="plan-and-execute")
-result = await planner.run_plan("Research market and suggest pricing")
-```
-
----
-
-### Tree-of-Thoughts Agent
-
-#### `async solve_tot(goal: str, max_steps: Optional[int] = None, num_thoughts: Optional[int] = None) -> Dict`
-
-Run tree-of-thoughts reasoning.
-
-**Parameters:**
-- `goal` (str): Problem to solve
-- `max_steps` (Optional[int]): Maximum depth (defaults to `max_iterations`)
-- `num_thoughts` (Optional[int]): Branches per level (defaults to `branches`)
-
-**Returns:**
-- `Dict`: Result with keys:
-  - `success` (bool): Success status
-  - `goal` (str): Original goal
-  - `explored_paths` (int): Number of paths explored
-  - `best_path` (List[str]): Selected reasoning path
-  - `answer` (str): Final answer
-
-**Example:**
-```python
-tot = ai.create_planning_agent(strategy="tot", max_iterations=3)
-result = await tot.solve_tot("Evaluate 3 mitigation strategies")
-```
-
----
-
-## Tools
-
-### `class Tool(name, func, description)`
-
-Tool wrapper.
-
-**Attributes:**
-- `name` (str): Tool name
-- `func` (Callable): Tool function
-- `description` (str): Tool description
-
-**Methods:**
-
-#### `execute(*args, **kwargs) -> Any`
-
-Execute tool.
-
-**Example:**
-```python
-result = tool.execute("input")
-```
-
----
-
-## Memory
-
-### Vector Memory
-
-#### `add_document(doc_id: str, text: str) -> None`
-
-Add document to vector memory.
-
-**Parameters:**
-- `doc_id` (str): Document ID
-- `text` (str): Document text
-
-**Example:**
-```python
-ai.vector_memory.add_document("doc1", "Kite is a framework...")
-```
-
-#### `search(query: str, top_k: int = 5) -> List[Dict]`
-
-Search for similar documents.
-
-**Parameters:**
-- `query` (str): Search query
-- `top_k` (int): Number of results
-
-**Returns:**
-- `List[Dict]`: Results with keys:
-  - `doc_id` (str): Document ID
-  - `text` (str): Document text
-  - `score` (float): Similarity score
-
-**Example:**
-```python
+ai.vector_memory.add_document("doc1", "Kite is a Python framework...")
 results = ai.vector_memory.search("What is Kite?", top_k=3)
 ```
 
 ---
 
-### Graph RAG
+#### `ai.session_memory`
 
-#### `add_entity(name: str, type: str, properties: Dict = None) -> None`
+Conversation history manager.
 
-Add entity to knowledge graph.
+**Methods:**
+- `add_message(session_id, role, content)`
+- `get_history(session_id, max_messages=None)`
+- `clear_session(session_id)`
 
-**Parameters:**
-- `name` (str): Entity name
-- `type` (str): Entity type
-- `properties` (Dict): Entity properties
+---
+
+#### `ai.graph_rag`
+
+Knowledge graph for relationship-aware RAG.
+
+**Methods:**
+- `add_entity(name, type, properties=None)`
+- `add_relationship(entity1, relation, entity2)`
+- `query(question)`
+
+---
+
+#### `ai.circuit_breaker`
+
+Fault tolerance manager.
+
+**Methods:**
+- `execute(func, *args, **kwargs)`
+- `get_stats()`
+- `reset()`
+
+---
+
+#### `ai.idempotency`
+
+Prevents duplicate operations.
+
+**Methods:**
+- `execute(operation_id, func, args=None, ttl=3600)`
+
+---
+
+## 2. Agent APIs
+
+### Agent.run()
+
+#### `run(user_input: str, context: Optional[Dict] = None) -> Dict`
+
+Execute agent on input (async).
+
+**Returns:** Dict with `response`, `total_tokens`, `tool_calls`
 
 **Example:**
 ```python
-ai.graph_rag.add_entity("Kite", "framework", {"language": "Python"})
+result = await agent.run("What is quantum computing?")
+print(result['response'])
 ```
 
-#### `add_relationship(source: str, relation: str, target: str) -> None`
+---
 
-Add relationship between entities.
+### Agent.get_metrics()
 
-**Parameters:**
-- `source` (str): Source entity
-- `relation` (str): Relationship type
-- `target` (str): Target entity
+Get agent performance metrics.
 
 **Example:**
 ```python
-ai.graph_rag.add_relationship("Kite", "uses", "Circuit Breakers")
+metrics = agent.get_metrics()
 ```
 
-#### `query(question: str) -> str`
+---
 
-Query knowledge graph.
+## 3. Tool System
 
-**Parameters:**
-- `question` (str): Question
+### Tool Class
 
-**Returns:**
-- `str`: Answer
+#### `Tool(name: str, func: Callable, description: str)`
 
-**Example:**
+Wrap a function as a tool.
+
+---
+
+### Built-in Tools
+
+#### WebSearchTool
+
 ```python
-answer = ai.graph_rag.query("What does Kite use?")
+from kite.tools import WebSearchTool
+search = WebSearchTool()
 ```
+
+---
+
+#### PythonReplTool
+
+Safe Python code execution.
+
+```python
+from kite.tools.code_execution import PythonReplTool
+python = PythonReplTool()
+```
+
+---
+
+#### ShellTool
+
+Execute shell commands (with whitelisting).
+
+```python
+from kite.tools.system_tools import ShellTool
+shell = ShellTool(allowed_commands=["ls", "git", "df"])
+```
+
+---
+
+## 4. Memory Systems
+
+### Vector Memory
+
+#### `add_document(doc_id: str, text: str, metadata: Dict = None)`
+
+Add document to vector index.
+
+---
+
+#### `search(query: str, top_k: int = 5) -> List[Tuple]`
+
+Semantic search.
 
 ---
 
 ### Session Memory
 
-#### `add_message(role: str, content: str) -> None`
+#### `add_message(session_id: str, role: str, content: str)`
 
-Add message to session.
-
-**Parameters:**
-- `role` (str): Message role (`"user"` or `"assistant"`)
-- `content` (str): Message content
-
-**Example:**
-```python
-ai.session_memory.add_message("user", "Hello")
-ai.session_memory.add_message("assistant", "Hi!")
-```
-
-#### `get_history() -> List[Dict]`
-
-Get conversation history.
-
-**Returns:**
-- `List[Dict]`: Messages
-
-**Example:**
-```python
-history = ai.session_memory.get_history()
-```
+Store conversation message.
 
 ---
 
-## Safety
+### Graph RAG
+
+#### `add_entity(name: str, type: str, properties: Dict = None)`
+
+Add entity to knowledge graph.
+
+---
+
+## 5. Safety Mechanisms
 
 ### Circuit Breaker
 
-#### `get_stats() -> Dict`
-
-Get circuit breaker statistics.
-
-**Returns:**
-- `Dict`: Statistics with keys:
-  - `state` (str): Current state
-  - `total_calls` (int): Total calls
-  - `successful_calls` (int): Successful calls
-  - `failed_calls` (int): Failed calls
-  - `rejected_calls` (int): Rejected calls
-  - `success_rate` (float): Success rate
-
-**Example:**
+**Configuration:**
 ```python
-stats = ai.circuit_breaker.get_stats()
-print(f"Success rate: {stats['success_rate']:.2%}")
-```
-
-#### `reset() -> None`
-
-Manually reset circuit breaker.
-
-**Example:**
-```python
-ai.circuit_breaker.reset()
+ai.circuit_breaker.config.failure_threshold = 3
+ai.circuit_breaker.config.timeout_seconds = 60
 ```
 
 ---
 
 ### Idempotency Manager
 
-#### `execute(operation_id: str, func: Callable, args: tuple = (), kwargs: dict = None, ttl: int = 3600) -> Any`
-
-Execute operation with idempotency.
-
-**Parameters:**
-- `operation_id` (str): Unique operation ID
-- `func` (Callable): Function to execute
-- `args` (tuple): Function arguments
-- `kwargs` (dict): Function keyword arguments
-- `ttl` (int): Time-to-live in seconds
-
-**Returns:**
-- `Any`: Function result (cached or fresh)
-
 **Example:**
 ```python
 result = ai.idempotency.execute(
-    operation_id="order_12345",
-    func=process_payment,
-    args=(order_id, amount)
+    operation_id="process_payment_12345",
+    func=charge_card,
+    args=(card_number, amount)
 )
 ```
 
 ---
 
-## Pipelines
+## 6. Routing
 
-### `class DeterministicPipeline(name: str)`
+### LLM Router
 
-Deterministic workflow with HITL support.
-
-**Methods:**
-
-#### `add_step(name: str, func: Callable) -> None`
-
-Add workflow step.
-
-**Parameters:**
-- `name` (str): Step name
-- `func` (Callable): Step function
-
-**Example:**
 ```python
-workflow.add_step("research", research_func)
-```
+from kite.routing.llm_router import LLMRouter
 
-#### `add_checkpoint(step_name: str, approval_required: bool = True) -> None`
-
-Add checkpoint after step.
-
-**Parameters:**
-- `step_name` (str): Step name
-- `approval_required` (bool): Require approval
-
-**Example:**
-```python
-workflow.add_checkpoint("research", approval_required=True)
-```
-
-#### `add_intervention_point(step_name: str, callback: Callable) -> None`
-
-Add intervention point before step.
-
-**Parameters:**
-- `step_name` (str): Step name
-- `callback` (Callable): Callback function
-
-**Example:**
-```python
-workflow.add_intervention_point("execute", user_callback)
-```
-
-#### `async execute_async(data: Dict) -> PipelineState`
-
-Execute workflow asynchronously.
-
-**Parameters:**
-- `data` (Dict): Initial data
-
-**Returns:**
-- `PipelineState`: Pipeline state
-
-**Example:**
-```python
-state = await workflow.execute_async({"query": "..."})
-```
-
-#### `async resume_async(task_id: str, feedback: Optional[str] = None) -> PipelineState`
-
-Resume paused workflow.
-
-**Parameters:**
-- `task_id` (str): Task ID
-- `feedback` (Optional[str]): User feedback
-
-**Returns:**
-- `PipelineState`: Updated state
-
-**Example:**
-```python
-state = await workflow.resume_async(task_id, feedback="Approved")
+router = LLMRouter(llm=ai.llm)
+router.add_route("billing", "Handle billing queries", billing_handler)
+result = await router.route("Where's my invoice?")
 ```
 
 ---
 
-## Routing
+## 7. Workflows & Pipelines
 
-### Semantic Router
+### Creating Pipelines
 
-#### `route(text: str) -> str`
-
-Route text to intent.
-
-**Parameters:**
-- `text` (str): Input text
-
-**Returns:**
-- `str`: Intent name
-
-**Example:**
 ```python
-router = ai.create_semantic_router([
-    ("support", "help, issue"),
-    ("sales", "pricing, buy")
-])
-intent = router.route("I need help")  # "support"
+workflow = ai.pipeline.create("approval_flow")
+workflow.add_step("draft", draft_function)
+workflow.add_checkpoint("draft")
+workflow.add_step("send", send_function)
+
+state = await workflow.execute_async({"data": "..."})
 ```
 
 ---
 
-## Configuration
+## 8. Monitoring & Metrics
+
+### Enable Monitoring
+
+```python
+ai.enable_verbose_monitoring()
+ai.enable_tracing("trace.json")
+```
+
+---
+
+### Metrics Collection
+
+```python
+metrics = ai.get_metrics()
+ai.print_summary()
+```
+
+---
+
+## 9. Configuration
 
 ### Environment Variables
 
 ```bash
 # LLM Provider
-LLM_PROVIDER=openai|anthropic|groq|together|ollama
-LLM_MODEL=model-name
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o
 OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GROQ_API_KEY=gsk_...
 
 # Embedding Provider
-EMBEDDING_PROVIDER=fastembed|openai|cohere
+EMBEDDING_PROVIDER=fastembed
 EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 
 # Safety
-CIRCUIT_BREAKER_THRESHOLD=3
-CIRCUIT_BREAKER_TIMEOUT=60
-IDEMPOTENCY_TTL=3600
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_TIMEOUT_SECONDS=60
 
 # Memory
-VECTOR_BACKEND=faiss|chroma
+VECTOR_BACKEND=faiss
 VECTOR_DIMENSION=384
-REDIS_URL=redis://localhost:6379
-
-# Database
-POSTGRES_URL=postgresql://user:pass@localhost/db
 ```
 
 ---
 
-## Error Handling
-
-### CircuitBreakerError
-
-Raised when circuit breaker blocks an operation.
+## Complete Example
 
 ```python
-from kite.safety.circuit_breaker import CircuitBreakerError
+import asyncio
+from kite import Kite
+from kite.tools import WebSearchTool
 
-try:
-    result = ai.complete(prompt)
-except CircuitBreakerError as e:
-    print(f"Circuit open: {e}")
+async def main():
+    # Initialize
+    ai = Kite()
+    ai.enable_verbose_monitoring()
+    
+    # Create tools
+    search = WebSearchTool()
+    
+    # Create agent
+    agent = ai.create_agent(
+        name="Researcher",
+        system_prompt="Research topics thoroughly.",
+        tools=[search],
+        agent_type="react"
+    )
+    
+    # Run
+    result = await agent.run("Research quantum computing")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 ---
 
-## Best Practices
-
-1. **Always use async for agents**: `await agent.run()`
-2. **Monitor circuit breaker**: Check `ai.circuit_breaker.get_stats()`
-3. **Use idempotency for writes**: Prevent duplicate operations
-4. **Configure timeouts**: Set appropriate LLM timeouts
-5. **Handle errors gracefully**: Use try/except blocks
-
----
-
-For more information, see:
+For more information:
+- [Main README](../README.md)
+- [Examples](../examples/README.md)
 - [Architecture Guide](architecture.md)
-- [Quick Start](quickstart.md)
-- [Deployment Guide](deployment.md)

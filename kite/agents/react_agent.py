@@ -88,21 +88,24 @@ class ReActAgent(Agent):
                 "summary": state['history'][-1]['reasoning'] if state['history'] else "Starting task..."
             })
             
-            # 2. THINK & PLAN (Structured Extraction)
+            # 2. THINK & PLAN - Try native tool calling first
             if self.verbose:
                 print(f"[{self.name}] Reflecting and deciding next action...")
-            system_msg, user_msg = self._build_structured_prompt(state)
             
-            try:
-                # Send as a chat conversation for best instruction following
+            # Try native tool calling
+            success, structured_output = await self._try_native_tool_calling(state)
+            
+            # Fallback to JSON prompting if native not supported
+            if not success:
+                system_msg, user_msg = self._build_structured_prompt(state)
                 messages = [
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": user_msg}
                 ]
-                
                 response = await self._get_llm_response(messages)
                 structured_output = self._parse_structured_output(response)
-                
+            
+            try:
                 # Support common aliases for keys
                 reasoning = structured_output.get('reasoning') or structured_output.get('thought') or structured_output.get('reflection', 'No reasoning.')
                 action_name = structured_output.get('tool') or structured_output.get('action') or structured_output.get('name')
@@ -226,6 +229,70 @@ class ReActAgent(Agent):
             "data": state['data']
         }
     
+
+    async def _try_native_tool_calling(self, state: Dict) -> tuple:
+        """
+        Try native tool calling. Returns (success: bool, result: Dict).
+        If success=False, fallback to JSON prompting.
+        """
+        try:
+            # Build tools schema for OpenAI/Groq format
+            tools_schemas = []
+            for name, tool in self.tools.items():
+                tools_schemas.append(tool.to_schema())
+            
+            # Build simple messages
+            system_msg = f"{self.system_prompt}\n\nHelp with: {state['goal']}"
+            
+            history_text = ""
+            if state['history']:
+                recent = state['history'][-5:]
+                for h in recent:
+                    obs_summary = str(h['observation'])[:100]
+                    history_text += f"\nStep {h['step']}: {h['action'].get('tool')} -> {obs_summary}"
+            
+            user_msg = f"Goal: {state['goal']}\nSteps: {state['steps']}\n{history_text or 'Starting...'}\n\nNext action?"
+            
+            messages = [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg}
+            ]
+            
+            # Try calling with tools parameter
+            response = await self.llm.chat_async(messages, tools=tools_schemas, temperature=0.1)
+            
+            # Handle native tool call response
+            if isinstance(response, dict) and response.get('tool_calls'):
+                tool_call = response['tool_calls'][0]
+                function = tool_call.get('function', {})
+                import json
+                args_str = function.get('arguments', '{}')
+                # Parse arguments if string
+                if isinstance(args_str, str):
+                    args = json.loads(args_str)
+                else:
+                    args = args_str
+                    
+                return True, {
+                    "reasoning": response.get('content') or "Using tool",
+                    "tool": function.get('name'),
+                    "arguments": args,
+                    "is_final": False
+                }
+            
+            # No tool calls = final answer
+            content = response if isinstance(response, str) else response.get('content', '')
+            return True, {
+                "reasoning": content,
+                "is_final": True
+            }
+            
+        except (TypeError, AttributeError, KeyError) as e:
+            # Native tool calling not supported
+            if self.verbose and state['steps'] == 1:
+                print(f"   [{self.name}] Native tool calling not supported, using JSON prompting")
+            return False, {}
+
     def _build_structured_prompt(self, state: Dict) -> Tuple[str, str]:
         tool_desc = ""
         for n, t in self.tools.items():
@@ -294,7 +361,9 @@ Choose the next tool to call or provide the final answer. Remember: If you do no
         stop_tokens = ["\nObservation:", "\nThought:", "\nAction:", "\nStep"]
         # Use chat_async if available, as it's better for Instruct models
         if hasattr(self.llm, 'chat_async'):
-            return await self.llm.chat_async(messages, temperature=0.1, stop=stop_tokens, format="json")
+            # Note: format='json' is not supported by all providers (e.g., Groq)
+            # Rely on system prompt instructions for JSON formatting instead
+            return await self.llm.chat_async(messages, temperature=0.1, stop=stop_tokens)
         
         # Fallback to single string if provider doesn't support chat
         full_text = "\n\n".join([f"### {m['role'].upper()}\n{m['content']}" for m in messages])

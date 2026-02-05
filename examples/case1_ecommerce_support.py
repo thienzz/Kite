@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import logging
 import time
@@ -89,12 +89,14 @@ async def main():
     # ========================================================================
     print("[STEP 1] Initializing framework with safety patterns...")
     
+    # Kite will auto-read LLM_PROVIDER and LLM_MODEL from environment
     ai = Kite(config={
         "circuit_breaker_enabled": True,
         "rate_limit_enabled": True,
         "max_iterations": 10,
         "semantic_router_threshold": 0.4
     })
+
     
     print("   [OK] Framework initialized")
     print("   [OK] Circuit breaker enabled")

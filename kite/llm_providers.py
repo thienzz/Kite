@@ -755,12 +755,33 @@ class GroqProvider(BaseLLMProvider):
     @retry(wait=wait_exponential(multiplier=1, min=4, max=60), stop=stop_after_attempt(5), reraise=True)
     async def chat_async(self, messages: List[Dict], **kwargs) -> str:
         """Async chat completion."""
-        response = await self.async_client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **kwargs
-        )
-        return response.choices[0].message.content
+        params = self._sanitize_params(kwargs)
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **params
+            )
+        except Exception as e:
+            self.logger.error(f"Groq Chat Async Error: {e}")
+            raise
+        
+        msg = response.choices[0].message
+        if msg.tool_calls:
+            # Convert to dicts same as sync version
+            tool_calls = []
+            for tc in msg.tool_calls:
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+            return {"content": msg.content, "tool_calls": tool_calls}
+            
+        return msg.content
 
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate completion."""

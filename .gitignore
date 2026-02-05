@@ -61,7 +61,6 @@ analytics_demo.db
 # Documentation builds
 docs/_build/
 site/
-<<<<<<< HEAD
 
 # OS
 Thumbs.db
@@ -72,6 +71,8 @@ data/raw/
 data/processed/
 experiments/
 checkpoints/
+vector_db/
+knowledge/
 
 # Large files
 *.zip
@@ -81,9 +82,6 @@ checkpoints/
 # Backup files
 *.bak
 *~
-/vector_db
-/knowledge
-=======
-vector_db/
->>>>>>> origin/main
+
+# Example scripts (optional)
 examples/linkedin_lead_scraper_reactive.py

@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include requirements.txt
+include requirements_no_vllm.txt
+include CHANGELOG.md
+include CONTRIBUTING.md
+recursive-include kite *.json *.yaml *.yml *.txt

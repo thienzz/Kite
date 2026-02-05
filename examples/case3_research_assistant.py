@@ -118,15 +118,49 @@ async def main():
         res = await planner.run(f"Create a research plan for: {topic}")
         
         try:
-            # Extract JSON
+            # Robust JSON extraction (similar to router)
             import re
-            cleaned = re.sub(r"```json|```", "", res['response']).strip()
-            plan_data = json.loads(cleaned)
-            state['plan'] = plan_data.get('plan', [])
+            response_text = res['response']
+            
+            # Try to extract JSON
+            cleaned = re.sub(r"```json|```", "", response_text).strip()
+            
+            # Try regex to find JSON array
+            json_match = re.search(r'\[.*?\]', cleaned, re.DOTALL)
+            if json_match:
+                cleaned = json_match.group(0)
+            
+            try:
+                plan_data = json.loads(cleaned)
+                
+                # Handle both formats: {"plan": [...]} or [...]
+                if isinstance(plan_data, dict):
+                    state['plan'] = plan_data.get('plan', [])
+                elif isinstance(plan_data, list):
+                    state['plan'] = plan_data
+                else:
+                    raise ValueError("Invalid plan format")
+                    
+            except json.JSONDecodeError:
+                # Fallback: extract questions from text
+                print("   [WARN] JSON parse failed, extracting questions from text...")
+                lines = response_text.split('\n')
+                questions = []
+                for line in lines:
+                    # Look for numbered questions
+                    match = re.match(r'\s*\d+[\.\)]\s*(.+)', line)
+                    if match:
+                        questions.append(match.group(1).strip())
+                
+                if questions:
+                    state['plan'] = questions[:max_sub_questions]
+                else:
+                    raise ValueError("Could not extract questions from response")
             
             # Validation
             if not state['plan']:
                 raise ValueError("Planner returned empty plan.")
+
                 
             print(f"   [Planner] Generated {len(state['plan'])} sub-questions.")
             for i, q in enumerate(state['plan']):

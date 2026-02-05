@@ -48,191 +48,6 @@ class GmailConfig:
 
 
 # ============================================================================
-# MOCK GMAIL CLIENT
-# ============================================================================
-
-class MockGmailClient:
-    """
-    Mock Gmail client for demonstration.
-    
-    In production, use:
-    from googleapiclient.discovery import build
-    service = build('gmail', 'v1', credentials=creds)
-    """
-    
-    def __init__(self):
-        self.emails_db = self._create_mock_emails()
-        self.sent_emails = []
-        self.labels = [
-            {"id": "INBOX", "name": "INBOX"},
-            {"id": "SENT", "name": "SENT"},
-            {"id": "DRAFT", "name": "DRAFT"},
-            {"id": "IMPORTANT", "name": "IMPORTANT"},
-            {"id": "STARRED", "name": "STARRED"}
-        ]
-    
-    def _create_mock_emails(self) -> List[Dict]:
-        """Create mock email database."""
-        now = datetime.now()
-        
-        return [
-            {
-                "id": "email001",
-                "threadId": "thread001",
-                "labelIds": ["INBOX", "IMPORTANT"],
-                "snippet": "Q4 strategy meeting scheduled for next week...",
-                "internalDate": int((now - timedelta(hours=2)).timestamp() * 1000),
-                "payload": {
-                    "headers": [
-                        {"name": "From", "value": "sarah@company.com"},
-                        {"name": "To", "value": "team@company.com"},
-                        {"name": "Subject", "value": "Q4 Strategy Meeting"},
-                        {"name": "Date", "value": (now - timedelta(hours=2)).strftime("%a, %d %b %Y %H:%M:%S")}
-                    ],
-                    "body": {
-                        "data": """Hi team,
-
-I'd like to schedule our Q4 strategy meeting for next Tuesday at 2 PM.
-
-Agenda:
-- Review Q3 performance
-- Discuss Project Zeus progress
-- Plan Q4 initiatives
-
-Please confirm your attendance.
-
-Best regards,
-Sarah"""
-                    }
-                }
-            },
-            {
-                "id": "email002",
-                "threadId": "thread002",
-                "labelIds": ["INBOX"],
-                "snippet": "AlphaCorp partnership update and next steps...",
-                "internalDate": int((now - timedelta(hours=5)).timestamp() * 1000),
-                "payload": {
-                    "headers": [
-                        {"name": "From", "value": "david@company.com"},
-                        {"name": "To", "value": "sarah@company.com"},
-                        {"name": "Subject", "value": "AlphaCorp Partnership Update"},
-                        {"name": "Date", "value": (now - timedelta(hours=5)).strftime("%a, %d %b %Y %H:%M:%S")}
-                    ],
-                    "body": {
-                        "data": """Sarah,
-
-Great news! AlphaCorp has agreed to our partnership terms.
-
-Next steps:
-1. Legal review of contract (by Friday)
-2. Sign agreement (next Monday)
-3. Kick-off meeting (Jan 20)
-
-The partnership will accelerate Project Zeus by 3 months.
-
-David"""
-                    }
-                }
-            },
-            {
-                "id": "email003",
-                "threadId": "thread003",
-                "labelIds": ["SENT"],
-                "snippet": "Project Zeus status report...",
-                "internalDate": int((now - timedelta(days=1)).timestamp() * 1000),
-                "payload": {
-                    "headers": [
-                        {"name": "From", "value": "me@company.com"},
-                        {"name": "To", "value": "executives@company.com"},
-                        {"name": "Subject", "value": "Project Zeus - Weekly Status"},
-                        {"name": "Date", "value": (now - timedelta(days=1)).strftime("%a, %d %b %Y %H:%M:%S")}
-                    ],
-                    "body": {
-                        "data": """Team,
-
-Project Zeus Status - Week 3:
-
-Progress:
-[OK] Infrastructure migration 60% complete
-[OK] AlphaCorp partnership finalized
-[OK] All milestones on track
-
-Risks:
-- Need to hire 2 more engineers
-- Budget review needed for Q1
-
-Overall: Green status
-
-Thanks,
-Project Team"""
-                    }
-                }
-            }
-        ]
-    
-    def users_messages_list(self, userId: str, q: str = None, maxResults: int = 10, labelIds: List[str] = None) -> Dict:
-        """List messages."""
-        results = []
-        
-        for email in self.emails_db:
-            # Filter by query
-            if q:
-                subject = next((h["value"] for h in email["payload"]["headers"] if h["name"] == "Subject"), "")
-                body = email["payload"]["body"]["data"]
-                snippet = email["snippet"]
-                
-                if not (q.lower() in subject.lower() or 
-                       q.lower() in body.lower() or 
-                       q.lower() in snippet.lower()):
-                    continue
-            
-            # Filter by labels
-            if labelIds:
-                if not any(label in email["labelIds"] for label in labelIds):
-                    continue
-            
-            results.append({
-                "id": email["id"],
-                "threadId": email["threadId"]
-            })
-        
-        return {
-            "messages": results[:maxResults]
-        }
-    
-    def users_messages_get(self, userId: str, id: str, format: str = "full") -> Dict:
-        """Get specific message."""
-        for email in self.emails_db:
-            if email["id"] == id:
-                return email
-        
-        raise Exception(f"Email not found: {id}")
-    
-    def users_messages_send(self, userId: str, body: Dict) -> Dict:
-        """Send message."""
-        message_id = f"sent{len(self.sent_emails)+1:03d}"
-        
-        sent_email = {
-            "id": message_id,
-            "threadId": f"thread{len(self.sent_emails)+100}",
-            "labelIds": ["SENT"],
-            **body
-        }
-        
-        self.sent_emails.append(sent_email)
-        
-        return {
-            "id": message_id,
-            "threadId": sent_email["threadId"]
-        }
-    
-    def users_labels_list(self, userId: str) -> Dict:
-        """List labels."""
-        return {"labels": self.labels}
-
-
-# ============================================================================
 # GMAIL MCP SERVER
 # ============================================================================
 
@@ -242,8 +57,19 @@ class GmailMCPServer:
     
     Provides tools for AI agents to search and manage emails.
     
+    Requires: google-api-python-client, google-auth-httplib2, google-auth-oauthlib
+    Install: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+    
+    Setup:
+        1. Enable Gmail API in Google Cloud Console
+        2. Download credentials.json
+        3. Run authentication flow to get token
+    
     Example:
-        config = GmailConfig()
+        from googleapiclient.discovery import build
+        from google.oauth2.credentials import Credentials
+        
+        config = GmailConfig(credentials_path='~/.gmail_credentials.json')
         server = GmailMCPServer(config)
         
         # Search emails
@@ -258,8 +84,51 @@ class GmailMCPServer:
         if credentials_path:
             self.config.credentials_path = credentials_path
         
-        # Initialize Gmail client (mock for demo)
-        self.gmail = MockGmailClient()
+        # Initialize Gmail client (requires Google API client)
+        try:
+            from googleapiclient.discovery import build
+            from google.oauth2.credentials import Credentials
+            from google.auth.transport.requests import Request
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            import os
+            import pickle
+            
+            SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 
+                      'https://www.googleapis.com/auth/gmail.send']
+            
+            creds = None
+            token_path = os.path.expanduser('~/.gmail_token.pickle')
+            
+            # Load existing token
+            if os.path.exists(token_path):
+                with open(token_path, 'rb') as token:
+                    creds = pickle.load(token)
+            
+            # Refresh or get new credentials
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                elif self.config.credentials_path and os.path.exists(self.config.credentials_path):
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.config.credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                else:
+                    raise Exception("Gmail credentials not found. Please provide credentials_path")
+                
+                # Save token
+                with open(token_path, 'wb') as token:
+                    pickle.dump(creds, token)
+            
+            self.gmail = build('gmail', 'v1', credentials=creds)
+            
+        except ImportError:
+            raise ImportError(
+                "Google API client is required for GmailMCPServer. "
+                "Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib"
+            )
+        except Exception as e:
+            raise Exception(f"Failed to initialize Gmail client: {e}")
+
         
         # Rate limiting
         self.request_count = 0

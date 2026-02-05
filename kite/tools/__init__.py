@@ -1,16 +1,21 @@
-"""MCP Servers (Tools) module."""
-from .postgres_mcp_server import PostgresMCPServer
-from .slack_mcp_server import SlackMCPServer
-from .stripe_mcp_server import StripeMCPServer
-from .gmail_mcp_server import GmailMCPServer
-from .gdrive_mcp_server import GoogleDriveMCPServer
+"""
+Kite Tools Module
+
+Standard tools that agents can use directly:
+- WebSearchTool: Web search using DuckDuckGo
+- PythonReplTool: Safe Python code execution
+- ShellTool: Shell command execution (with whitelisting)
+
+MCP Servers are in the mcp/ subpackage.
+"""
+
 from .search import WebSearchTool
+from .code_execution import PythonReplTool
+from .system_tools import ShellTool
 
 __all__ = [
-    'PostgresMCPServer',
-    'SlackMCPServer', 
-    'StripeMCPServer',
-    'GmailMCPServer',
-    'GoogleDriveMCPServer',
-    'WebSearchTool'
+    'WebSearchTool',
+    'PythonReplTool',
+    'ShellTool'
 ]
+

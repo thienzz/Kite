@@ -4,12 +4,28 @@ from setuptools import setup, find_packages
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-# Read requirements
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+# Minimal core dependencies - always installed
+core_requirements = [
+    # Core utilities
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "tenacity>=8.2.0",
+    
+    # Essential for agents
+    "numpy>=1.24.0",
+    
+    # LLM Providers (must have for agents to work)
+    "anthropic>=0.18.0",
+    "openai>=1.0.0",
+    "groq>=0.4.0",
+    "together>=0.2.0",
+    "ollama>=0.1.0",
+]
 
 setup(
-    name="kite-framework",
+    name="kite-agent",
     version="0.1.0",
     author="Thien Nguyen",
     description="Production-Ready Agentic AI Framework with Enterprise Safety",
@@ -36,8 +52,44 @@ setup(
         "Programming Language :: Python :: 3.12",
     ],
     python_requires=">=3.8",
-    install_requires=requirements,
+    install_requires=core_requirements,
     extras_require={
+        # LLM Providers
+        "llm": [
+            "anthropic>=0.18.0",
+            "openai>=1.0.0",
+            "groq>=0.4.0",
+            "together>=0.2.0",
+            "ollama>=0.1.0",
+        ],
+        
+        # Vector memory and embeddings
+        "memory": [
+            "faiss-cpu>=1.7.4",
+            "chromadb>=0.4.0",
+            "sentence-transformers>=2.2.0",
+            "fastembed>=0.1.0",
+            "rank-bm25>=0.2.2",
+            "cohere>=5.0.0",
+        ],
+        
+        # Database connectors
+        "database": [
+            "psycopg2-binary>=2.9.0",
+            "redis>=5.0.0",
+            "mysql-connector-python>=8.0.0",
+            "motor>=3.3.0",
+        ],
+        
+        # Monitoring and API
+        "monitoring": [
+            "prometheus-client>=0.19.0",
+            "fastapi>=0.100.0",
+            "uvicorn>=0.22.0",
+            "python-multipart>=0.0.6",
+        ],
+        
+        # Development tools
         "dev": [
             "pytest>=7.0.0",
             "pytest-asyncio>=0.21.0",
@@ -45,6 +97,33 @@ setup(
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
+        ],
+        
+        # Install everything (for full featured experience)
+        "all": [
+            # LLM
+            "anthropic>=0.18.0",
+            "openai>=1.0.0",
+            "groq>=0.4.0",
+            "together>=0.2.0",
+            "ollama>=0.1.0",
+            # Memory
+            "faiss-cpu>=1.7.4",
+            "chromadb>=0.4.0",
+            "sentence-transformers>=2.2.0",
+            "fastembed>=0.1.0",
+            "rank-bm25>=0.2.2",
+            "cohere>=5.0.0",
+            # Database
+            "psycopg2-binary>=2.9.0",
+            "redis>=5.0.0",
+            "mysql-connector-python>=8.0.0",
+            "motor>=3.3.0",
+            # Monitoring
+            "prometheus-client>=0.19.0",
+            "fastapi>=0.100.0",
+            "uvicorn>=0.22.0",
+            "python-multipart>=0.0.6",
         ],
     },
     keywords="ai agents llm production-ready safety circuit-breaker agentic-ai",

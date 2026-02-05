@@ -28,24 +28,32 @@ class ToolRegistry:
         """Automatically load and register all standard contrib tools."""
         from .tool import Tool
         from .tools.contrib import (
-            web_search, 
-            calculator, 
             get_current_datetime,
-            search_linkedin_posts,
-            get_linkedin_profile_details,
-            get_linkedin_company_details,
-            create_linkedin_session
         )
         
+        # Try to import optional dependencies
+        try:
+            from .tools.web_search import web_search
+            has_web_search = True
+        except:
+            has_web_search = False
+            
+        try:
+            from .tools.contrib.calculator import calculator
+            has_calculator = True
+        except:
+            has_calculator = False
+        
+        # Basic tools that are always available
         standard_tools = [
-            ("web_search", web_search, "Search the web for information"),
-            ("calculator", calculator, "Evaluate mathematical expressions"),
             ("get_datetime", get_current_datetime, "Get current date and time"),
-            ("search_linkedin", search_linkedin_posts, "Search for LinkedIn posts. REQUIRED: 'query'. Use 'limit' parameter (default 30) for depth."),
-            ("get_profile", get_linkedin_profile_details, "Get detailed profile information. REQUIRED: 'profile_url'."),
-            ("get_company", get_linkedin_company_details, "Get detailed company information. REQUIRED: 'company_url'."),
-            ("create_session", create_linkedin_session, "Create a LinkedIn session by logging in manually")
         ]
+        
+        # Add optional tools if available
+        if has_web_search:
+            standard_tools.append(("web_search", web_search, "Search the web for information"))
+        if has_calculator:
+            standard_tools.append(("calculator", calculator, "Evaluate mathematical expressions"))
         
         for name, func, desc in standard_tools:
             if name not in self._tools:

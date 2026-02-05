@@ -65,14 +65,36 @@ Respond ONLY with a JSON object:
             elif "```" in content:
                 content = content.split("```")[-1].split("```")[0].strip()
             
-            data = json.loads(content)
-            category = data.get("category", "none")
-            confidence = data.get("confidence", 0.0)
-            
+            # Robust JSON parsing with fallback
+            try:
+                # Try to find JSON in text
+                import re
+                json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(0)
+                
+                data = json.loads(content)
+                category = data.get("category", "none")
+                confidence = data.get("confidence", 0.0)
+                reasoning = data.get("reasoning", "No reasoning")
+                
+            except (json.JSONDecodeError, AttributeError) as e:
+                # Fallback: keyword matching
+                print(f"[WARN] Router JSON parse failed creating fallback")
+                content_lower = response.lower()
+                category = "none"
+                confidence = 0.5
+                reasoning = "Fallback text classification"
+                
+                # Check for route keywords
+                for route_name in self.routes.keys():
+                    if route_name.replace("_", " ") in content_lower:
+                        category = route_name
+                        break
             print(f"\n  LLM Intent Classification:")
             print(f"   Query: {query}")
             print(f"   Category: {category} (confidence: {confidence:.0%})")
-            print(f"   Reasoning: {data.get('reasoning')}")
+            print(f"   Reasoning: {reasoning}")
 
             if category == "none" or category not in self.routes:
                 return {

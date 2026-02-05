@@ -140,12 +140,15 @@ class Kite:
     """
     
     def __init__(self, config: Optional[Dict] = None):
+        # Initialize logger first for debug output
+        self.logger = logging.getLogger("Kite")
+        
         # Always load environment defaults first
         self.config = self._load_config()
         # Merge with user-provided config if any
         if config:
             self.config.update(config)
-        self.logger = logging.getLogger("Kite")
+
         
         # Lazy storage
         self._llm = None
@@ -265,7 +268,25 @@ class Kite:
     
     def _load_config(self) -> Dict:
         from dotenv import load_dotenv
-        load_dotenv(override=True) # Load standard .env and override environment
+        import os
+        from pathlib import Path
+        
+        # Find .env file explicitly
+        env_path = Path.cwd() / '.env'
+        if env_path.exists():
+            self.logger.debug(f"Found .env at: {env_path}")
+            # Load with explicit path
+            loaded = load_dotenv(dotenv_path=str(env_path), override=True)
+            self.logger.debug(f"load_dotenv(path={env_path}) returned: {loaded}")
+        else:
+            self.logger.debug(f"No .env found at: {env_path}, trying default load")
+            loaded = load_dotenv(override=True)
+            self.logger.debug(f"load_dotenv() returned: {loaded}")
+        
+        # Check what was loaded
+        provider_from_env = os.getenv('LLM_PROVIDER')
+        self.logger.debug(f"After load_dotenv: LLM_PROVIDER={provider_from_env}")
+        
         return {
             'llm_provider': os.getenv('LLM_PROVIDER', 'ollama'),
             'llm_model': os.getenv('LLM_MODEL'),
@@ -285,16 +306,27 @@ class Kite:
         if self._llm is None:
             from .llm_providers import LLMFactory
             try:
+                # Priority 1: Check config
                 llm_provider = self.config.get('llm_provider')
+                llm_model = self.config.get('llm_model')
+                
+                # Priority 2: Check environment variables if not in config
+                if not llm_provider:
+                    llm_provider = os.getenv('LLM_PROVIDER')
+                if not llm_model:
+                    llm_model = os.getenv('LLM_MODEL')
+                
                 if llm_provider:
                     api_key = self.config.get(f'{llm_provider}_api_key') or os.getenv(f'{llm_provider.upper()}_API_KEY')
                     self._llm = LLMFactory.create(
                         llm_provider,
-                        self.config.get('llm_model'),
+                        llm_model,
                         api_key=api_key,
                         timeout=self.config.get('llm_timeout', 600.0)
                     )
+                    self.logger.info(f"[OK] Using {llm_provider}/{llm_model or 'default'} from config/env")
                 else:
+                    # Priority 3: Auto-detect
                     self._llm = LLMFactory.auto_detect(timeout=self.config.get('llm_timeout', 600.0))
             except Exception as e:
                 self.logger.warning(f"    LLM initialization failed: {e}")
