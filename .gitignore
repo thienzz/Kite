@@ -85,3 +85,4 @@ knowledge/
 
 # Example scripts (optional)
 examples/linkedin_lead_scraper_reactive.py
+*.backup

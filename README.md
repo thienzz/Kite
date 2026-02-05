@@ -119,8 +119,7 @@ async def main():
     agent = ai.create_agent(
         name="WeatherBot",
         system_prompt="You help users check weather. Always use the tool.",
-        tools=[weather_tool],
-        agent_type="react"
+        tools=[weather_tool]
     )
     
     # Run

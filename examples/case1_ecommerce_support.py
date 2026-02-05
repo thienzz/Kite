@@ -147,8 +147,7 @@ async def main():
         system_prompt="""You are an order support specialist.
 Help customers track orders, check delivery status, and answer shipping questions.
 Always be professional and provide accurate information from the order database.""",
-        tools=[search_tool],
-        agent_type="react"
+        tools=[search_tool]
     )
     
     refund_agent = ai.create_agent(
@@ -156,8 +155,7 @@ Always be professional and provide accurate information from the order database.
         system_prompt="""You are a refund specialist.
 Process refund requests, handle returns, and resolve payment issues.
 Always confirm order details before processing refunds.""",
-        tools=[search_tool, refund_tool, cancel_tool],
-        agent_type="react"
+        tools=[search_tool, refund_tool, cancel_tool]
     )
     
     product_agent = ai.create_agent(
@@ -165,8 +163,7 @@ Always confirm order details before processing refunds.""",
         system_prompt="""You are a product specialist.
 Help customers with product information, availability, and pricing.
 Suggest alternatives if items are out of stock.""",
-        tools=[inventory_tool],
-        agent_type="react"
+        tools=[inventory_tool]
     )
     
     print("   [OK] Created 3 specialized agents")
