@@ -33,22 +33,39 @@ pip install -e .
 Most AI frameworks overwhelm you with complexity. Kite gives you **production-grade reliability** with **dead-simple APIs**:
 
 ```python
+import asyncio
 from kite import Kite
 
-# Initialize once
-ai = Kite()
+async def main():
+    # Initialize
+    ai = Kite()
+    
+    # Define business logic
+    def search_orders(order_id: str) -> str:
+        """Search for order by ID"""
+        return f"Order {order_id} is shipped"
+    
+    def process_refunds(order_id: str) -> str:
+        """Process refund for order"""
+        return f"Refund processed for {order_id}"
+    
+    # Create tools
+    search_tool = ai.create_tool("search_orders", search_orders)
+    refund_tool = ai.create_tool("process_refunds", process_refunds)
+    
+    # Create agent
+    agent = ai.create_agent(
+        name="CustomerSupport",
+        system_prompt="You are a helpful e-commerce support agent.",
+        tools=[search_tool, refund_tool]
+    )
+    
+    # Run it
+    result = await agent.run("Where is order ORD-12345?")
+    print(result['response'])
 
-# Create a specialist agent
-support_agent = ai.create_agent(
-    name="CustomerSupport",
-    system_prompt="You are a helpful e-commerce support agent.",
-    tools=[search_orders, process_refunds],
-    agent_type="react"  # Autonomous reasoning loop
-)
-
-# Run it
-result = await support_agent.run("Where is order ORD-12345?")
-print(result['response'])
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 **That's it.** Behind the scenes, Kite handles:
