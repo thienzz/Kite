@@ -167,14 +167,17 @@ import asyncio
 from kite import Kite
 
 ai = Kite()
-agent = ai.create_agent("Assistant")
+agent = ai.create_agent(
+    name="Assistant",
+    system_prompt="You are a helpful assistant."
+)
 
 # Run multiple queries concurrently
 async def main():
     results = await asyncio.gather(
-        agent.run("Query 1"),
-        agent.run("Query 2"),
-        agent.run("Query 3")
+        agent.run("What is Python?"),
+        agent.run("What is AI?"),
+        agent.run("What is Kite?")
     )
     for result in results:
         print(result['response'])
@@ -204,19 +207,28 @@ from kite import Kite
 
 ai = Kite()
 
+# Define an expensive operation
+def process_payment(order_id, amount):
+    # Simulate payment processing
+    return {"order_id": order_id, "amount": amount, "status": "paid"}
+
 # Prevent duplicate operations
 result = ai.idempotency.execute(
     operation_id="process_order_12345",
-    func=expensive_operation,
-    args=(order_id, amount)
+    func=process_payment,
+    args=("ORD-12345", 99.99)
 )
+
+print(result)  # Processes payment
 
 # Same operation_id returns cached result
 result2 = ai.idempotency.execute(
     operation_id="process_order_12345",
-    func=expensive_operation,
-    args=(order_id, amount)
-)  # Returns cached result, doesn't execute again
+    func=process_payment,
+    args=("ORD-12345", 99.99)
+)
+
+print(result2)  # Returns cached result, doesn't execute again
 ```
 
 ### Semantic Routing
@@ -226,15 +238,16 @@ from kite import Kite
 
 ai = Kite()
 
-# Create router
-router = ai.create_semantic_router([
-    ("support", "help, issue, problem, bug"),
-    ("sales", "pricing, purchase, buy, cost"),
-    ("technical", "API, integration, code, developer")
-])
+# Create semantic router
+router = ai.semantic_router
+
+# Add routes
+router.add_route("support", "help issue problem bug customer service")
+router.add_route("sales", "pricing purchase buy cost payment billing")
+router.add_route("technical", "API integration code developer documentation")
 
 # Route user input
-intent = router.route("How do I integrate the API?")
+intent = router.classify("How do I integrate the API?")
 print(intent)  # "technical"
 ```
 

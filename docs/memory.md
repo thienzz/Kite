@@ -261,11 +261,16 @@ ai.session_memory.add_message("user", "What's the weather?")
 history = ai.session_memory.get_history()
 
 # Use in agent
-agent = ai.create_agent("Assistant")
-result = await agent.run(
-    "What did I just ask?",
-    context={"history": history}
-)
+async def main():
+    agent = ai.create_agent("Assistant")
+    result = await agent.run(
+        "What did I just ask?",
+        context={"history": history}
+    )
+    print(result['response'])
+
+import asyncio
+asyncio.run(main())
 ```
 
 ### Session Management

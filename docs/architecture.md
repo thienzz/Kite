@@ -258,8 +258,14 @@ history = ai.session_memory.get_history()
 Reasoning + Acting loop:
 
 ```python
-agent = ai.create_agent("Assistant", tools=[search, calculator])
-result = await agent.run("What's 15% of France's GDP?")
+import asyncio
+
+async def main():
+    agent = ai.create_agent("Assistant", tools=[search, calculator])
+    result = await agent.run("What's 15% of France's GDP?")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 #### Plan-Execute Agent (`plan_execute.py`)
@@ -267,8 +273,14 @@ result = await agent.run("What's 15% of France's GDP?")
 Decompose → Execute → Replan:
 
 ```python
-planner = ai.create_planning_agent(strategy="plan-and-execute")
-result = await planner.run("Research market and suggest pricing")
+import asyncio
+
+async def main():
+    planner = ai.create_planning_agent(strategy="plan-and-execute")
+    result = await planner.run("Research market and suggest pricing")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 **Features:**
@@ -281,8 +293,14 @@ result = await planner.run("Research market and suggest pricing")
 Parallel execution:
 
 ```python
-rewoo = ai.create_planning_agent(strategy="rewoo")
-result = await rewoo.run("Search news for 3 companies simultaneously")
+import asyncio
+
+async def main():
+    rewoo = ai.create_planning_agent(strategy="rewoo")
+    result = await rewoo.run("Search news for 3 companies simultaneously")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 #### Tree-of-Thoughts Agent (`tot.py`)
@@ -290,8 +308,14 @@ result = await rewoo.run("Search news for 3 companies simultaneously")
 Multi-path reasoning:
 
 ```python
-tot = ai.create_planning_agent(strategy="tot", max_iterations=3)
-result = await tot.run("Evaluate 3 mitigation strategies")
+import asyncio
+
+async def main():
+    tot = ai.create_planning_agent(strategy="tot", max_iterations=3)
+    result = await tot.run("Evaluate 3 mitigation strategies")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 **Features:**
@@ -310,11 +334,17 @@ workflow.add_checkpoint("research", approval_required=True)
 workflow.add_intervention_point("execute", callback_func)
 workflow.add_step("execute", execute_func)
 
-# Execute
-state = await workflow.execute_async({"query": "..."})
+async def main():
+    # Execute
+    state = await workflow.execute_async({"query": "..."})
+    print(f"Status: {state.status}")
+    
+    # Resume after approval  
+    state = await workflow.resume_async(state.task_id, feedback="Approved")
+    print(f"Final result: {state.data}")
 
-# Resume after approval
-state = await workflow.resume_async(state.task_id, feedback="Approved")
+import asyncio
+asyncio.run(main())
 ```
 
 **Features:**
@@ -344,8 +374,22 @@ intent = router.route("How do I integrate the API?")  # "technical"
 Combine multiple agent responses:
 
 ```python
-router = ai.create_aggregator_router([agent1, agent2, agent3])
-result = await router.route("complex query")
+import asyncio
+from kite import Kite
+
+ai = Kite()
+
+# Create multiple agents
+agent1 = ai.create_agent("Agent1", "You are agent 1")
+agent2 = ai.create_agent("Agent2", "You are agent 2")
+agent3 = ai.create_agent("Agent3", "You are agent 3")
+
+async def main():
+    router = ai.create_aggregator_router([agent1, agent2, agent3])
+    result = await router.route("complex query")
+    print(result)
+
+asyncio.run(main())
 ```
 
 ### 8. **Tool System** (`kite/tool.py`, `kite/tools/`)
@@ -506,12 +550,26 @@ ai.cache.get_or_set(
 Non-blocking I/O for concurrent requests:
 
 ```python
+import asyncio
+from kite import Kite
+
+ai = Kite()
+
+# Create agents
+agent1 = ai.create_agent("Agent1", "Assistant 1")
+agent2 = ai.create_agent("Agent2", "Assistant 2")
+agent3 = ai.create_agent("Agent3", "Assistant 3")
+
 # Async agent execution
-results = await asyncio.gather(
-    agent1.run(query1),
-    agent2.run(query2),
-    agent3.run(query3)
-)
+async def main():
+    results = await asyncio.gather(
+        agent1.run("Query 1"),
+        agent2.run("Query 2"),
+        agent3.run("Query 3")
+    )
+    print(results)
+
+asyncio.run(main())
 ```
 
 ### 5. **Batch Processing**

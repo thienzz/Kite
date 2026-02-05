@@ -282,20 +282,32 @@ ai.kill_switch.deactivate()
 ### Per-Agent Kill Switch
 
 ```python
+import asyncio
+
 agent = ai.create_agent("Assistant")
 
 # Activate for specific agent
 agent.kill_switch.activate("Agent misbehaving")
 
 # Only this agent's operations are blocked
-try:
-    await agent.run("Hello")
-except KillSwitchError:
-    print("Agent kill switch active")
+async def main():
+    try:
+        await agent.run("Hello")
+    except KillSwitchError:
+        print("Agent kill switch active")
 
-# Other agents still work
-other_agent = ai.create_agent("Other")
-await other_agent.run("Hello")  # Works fine
+asyncio.run(main())
+```
+
+```python
+import asyncio
+
+async def main():
+    # Other agents still work
+    other_agent = ai.create_agent("Other")
+    await other_agent.run("Hello")  # Works fine
+
+asyncio.run(main())
 ```
 
 ### Monitoring

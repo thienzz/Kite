@@ -339,12 +339,26 @@ print(f"Circuit state: {stats['state']}")
 Maximize throughput:
 
 ```python
-# Concurrent agent calls
-results = await asyncio.gather(
-    agent1.run(query1),
-    agent2.run(query2),
-    agent3.run(query3)
-)
+import asyncio
+from kite import Kite
+
+ai = Kite()
+
+# Create agents
+agent1 = ai.create_agent("Agent1", "Assistant 1")
+agent2 = ai.create_agent("Agent2", "Assistant 2")
+agent3 = ai.create_agent("Agent3", "Assistant 3")
+
+async def main():
+    # Concurrent agent calls
+    results = await asyncio.gather(
+        agent1.run("What is AI?"),
+        agent2.run("What is ML?"),
+        agent3.run("What is DL?")
+    )
+    print(results)
+
+asyncio.run(main())
 ```
 
 ### 5. Implement Graceful Shutdown

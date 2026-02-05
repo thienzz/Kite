@@ -133,16 +133,31 @@ Create a custom agent.
 
 **Example:**
 ```python
-agent = ai.create_agent(
-    name="Researcher",
-    system_prompt="You research topics thoroughly.",
-    tools=[search_tool],
-    agent_type="react",
-    model="groq/llama-3.3-70b-versatile",
-    verbose=True
-)
+import asyncio
+from kite import Kite
 
-result = await agent.run("Research quantum computing")
+ai = Kite()
+
+# Define a search tool
+def web_search(query: str) -> str:
+    return f"Search results for: {query}"
+
+search_tool = ai.create_tool("web_search", web_search)
+
+async def main():
+    agent = ai.create_agent(
+        name="Researcher",
+        system_prompt="You research topics thoroughly.",
+        tools=[search_tool],
+        agent_type="react",
+        model="groq/llama-3.3-70b-versatile",
+        verbose=True
+    )
+    
+    result = await agent.run("Research quantum computing")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 ---
@@ -289,8 +304,13 @@ Execute agent on input (async).
 
 **Example:**
 ```python
-result = await agent.run("What is quantum computing?")
-print(result['response'])
+import asyncio
+
+async def main():
+    result = await agent.run("What is quantum computing?")
+    print(result['response'])
+
+asyncio.run(main())
 ```
 
 ---
@@ -411,11 +431,23 @@ result = ai.idempotency.execute(
 ### LLM Router
 
 ```python
+import asyncio
+from kite import Kite
 from kite.routing.llm_router import LLMRouter
 
-router = LLMRouter(llm=ai.llm)
-router.add_route("billing", "Handle billing queries", billing_handler)
-result = await router.route("Where's my invoice?")
+ai = Kite()
+
+# Define handler function
+async def billing_handler(query: str):
+    return {"response": f"Billing query handled: {query}"}
+
+async def main():
+    router = LLMRouter(llm=ai.llm)
+    router.add_route("billing", "Handle billing queries", billing_handler)
+    result = await router.route("Where's my invoice?")
+    print(result)
+
+asyncio.run(main())
 ```
 
 ---
