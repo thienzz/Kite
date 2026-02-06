@@ -30,7 +30,7 @@ It provides a "kernel" that validates every action the agent proposes before it 
 pip install kite-agent
 ```
 
-### Your This Agent
+### Your First Agent
 
 Here is a simple agent that proposes refunds but is supervised by the framework.
 

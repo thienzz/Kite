@@ -15,7 +15,7 @@ Supported Providers:
 - Replicate
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from abc import ABC, abstractmethod
 import os
 import logging
@@ -978,27 +978,52 @@ class AnthropicProvider(BaseLLMProvider):
             self.async_client = anthropic.AsyncAnthropic(api_key=self.api_key)
         except ImportError:
             raise ImportError("pip install anthropic")
+            
+    def _prepare_messages(self, messages: List[Dict]) -> Tuple[str, List[Dict]]:
+        """Extract system prompt and filter messages."""
+        system_prompt = ""
+        filtered_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt += msg["content"] + "\n"
+            else:
+                filtered_messages.append(msg)
+        return system_prompt.strip(), filtered_messages
     
     def complete(self, prompt: str, **kwargs) -> str:
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
     
     def chat(self, messages: List[Dict], **kwargs) -> str:
-        response = self.client.messages.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 1024)
-        )
+        system, filtered_msgs = self._prepare_messages(messages)
+        
+        params = {
+            "model": self.model,
+            "messages": filtered_msgs,
+            "max_tokens": kwargs.get("max_tokens", 1024),
+            **kwargs
+        }
+        if system:
+            params["system"] = system
+            
+        response = self.client.messages.create(**params)
         return response.content[0].text
     
     async def complete_async(self, prompt: str, **kwargs) -> str:
         return await self.chat_async([{"role": "user", "content": prompt}], **kwargs)
 
     async def chat_async(self, messages: List[Dict], **kwargs) -> str:
-        response = await self.async_client.messages.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 1024)
-        )
+        system, filtered_msgs = self._prepare_messages(messages)
+        
+        params = {
+            "model": self.model,
+            "messages": filtered_msgs,
+            "max_tokens": kwargs.get("max_tokens", 1024),
+            **kwargs
+        }
+        if system:
+            params["system"] = system
+
+        response = await self.async_client.messages.create(**params)
         return response.content[0].text
 
     async def stream_complete(self, prompt: str, **kwargs):
@@ -1006,11 +1031,18 @@ class AnthropicProvider(BaseLLMProvider):
             yield chunk
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
-        async with self.async_client.messages.stream(
-            model=self.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 1024)
-        ) as stream:
+        system, filtered_msgs = self._prepare_messages(messages)
+        
+        params = {
+            "model": self.model,
+            "messages": filtered_msgs,
+            "max_tokens": kwargs.get("max_tokens", 1024),
+            **kwargs
+        }
+        if system:
+            params["system"] = system
+
+        async with self.async_client.messages.stream(**params) as stream:
             async for text in stream.text_stream:
                 yield text
     
