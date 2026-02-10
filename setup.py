@@ -26,7 +26,7 @@ core_requirements = [
 
 setup(
     name="kite-agent",
-    version="0.1.0",
+    version="0.1.1",
     author="Thien Nguyen",
     description="Production-Ready Agentic AI Framework with Enterprise Safety",
     long_description=long_description,

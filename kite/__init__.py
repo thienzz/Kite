@@ -5,7 +5,7 @@ A lightweight, safety-first framework for building intelligent AI agents
 with enterprise-grade reliability.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Thien Nguyen"
 __license__ = "MIT"
 
