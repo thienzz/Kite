@@ -217,9 +217,9 @@ async def search_linkedin_posts(query: str, limit: int = 30, session_path: str =
                             .replace(String.fromCharCode(92), '/') 
                             .trim();
                         
-                        if (sanitizedContent.length > 1500) {
-                            sanitizedContent = sanitizedContent.substring(0, 1500) + "... [TRUNCATED FOR AGENT]";
-                        }
+                        # if sanitizedContent.length > 1500) {
+                        #     sanitizedContent = sanitizedContent.substring(0, 1500) + "... [TRUNCATED FOR AGENT]";
+                        # }
                         
                         let name = "Unknown";
                         let profile = "";
@@ -289,6 +289,18 @@ async def search_linkedin_posts(query: str, limit: int = 30, session_path: str =
                         
                         all_content.add(unique_key)
                         results.append(post_data)
+                        
+                        # Support direct callback for real-time saving
+                        callback = kwargs.get('on_post_found')
+                        if callback and callable(callback):
+                            try:
+                                if asyncio.iscoroutinefunction(callback):
+                                    await callback(post_data)
+                                else:
+                                    callback(post_data)
+                            except Exception as e:
+                                print(f"Error in callback: {e}")
+
                         if fw:
                             fw.event_bus.emit("scraper:post_discovered", {"post": post_data})
                             fw.event_bus.emit("tool:log", {"message": f"Extracted: {author_name}"})

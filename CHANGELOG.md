@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2026-02-10
 
-### Changed
-- Bump version to 0.1.1 for PyPI release
+### 🚀 New Features (LLM Integrations)
+- **Groq Integration**: Added native support for Groq API (Llama 3.1 8B/70B).
+- **OpenAI Integration**: Added support for OpenAI models (GPT-4o, GPT-5-nano).
+- **Anthropic Integration**: Added support for Claude 3.5 Sonnet and Haiku.
+- **Verification Script**: Added `examples/verify_providers.py` to test connectivity with all providers.
+
+### 🛠 Improvements
+- Updated `LLMFactory` to support new providers.
+- Improved error handling for API quotas and model not found errors.
+- Smoother fallback mechanisms in `create_agent`.
+
+### 📦 Dependencies
+- Added `groq`, `openai`, `anthropic` to `requirements.txt` and `setup.py`.
 
 ## [0.1.0] - 2025-01-23
 
